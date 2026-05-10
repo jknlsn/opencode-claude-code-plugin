@@ -21,6 +21,25 @@ export interface ClaudeCodeProvider {
   languageModel(modelId: string): LanguageModelV3
 }
 
+// Resolved at plugin init from opencode's plugin context (`directory` /
+// `worktree`). Used as the default `cwd` for spawned Claude CLI subprocesses
+// when the user hasn't set one explicitly in opencode.json. Fixes the
+// GUI-launch case on macOS where launchd hands the parent process `cwd=/`
+// and `process.cwd()` would propagate that to the CLI. See issue #4.
+let opencodeProjectDirectory: string | undefined
+
+function isUsableDirectory(d: unknown): d is string {
+  return typeof d === "string" && d.length > 1 && d !== "/"
+}
+
+function pickOpencodeDirectory(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined
+  const ctx = input as { directory?: unknown; worktree?: unknown }
+  if (isUsableDirectory(ctx.directory)) return ctx.directory
+  if (isUsableDirectory(ctx.worktree)) return ctx.worktree
+  return undefined
+}
+
 export function createClaudeCode(
   settings: ClaudeCodeProviderSettings = {},
 ): ClaudeCodeProvider {
@@ -195,6 +214,7 @@ async function providerConfig(
   const mergedOptions: Record<string, unknown> = {
     cliPath: "claude",
     proxyTools: ["Bash", "Edit", "Write", "WebFetch"],
+    ...(opencodeProjectDirectory ? { cwd: opencodeProjectDirectory } : {}),
     ...optionDefaults,
     ...cleanProviderOptions(existing?.options),
     providerID,
@@ -290,6 +310,11 @@ const server: OpenCodePlugin = async (input) => {
     setOpencodeClient((input as { client?: unknown }).client)
   }
 
+  // Capture opencode's project-aware cwd so the Claude CLI subprocess inherits
+  // the right directory even when opencode is launched from a macOS GUI shell
+  // (Dock/Finder/Spotlight), where `process.cwd()` is `/`.
+  opencodeProjectDirectory = pickOpencodeDirectory(input)
+
   return {
     config: async (config) => {
       config.provider ??= {}
@@ -298,7 +323,11 @@ const server: OpenCodePlugin = async (input) => {
       if (expanded) {
         const registered = Object.entries(config.provider)
           .filter(([id]) => id === PROVIDER_ID || id.startsWith(`${PROVIDER_ID}-`))
-          .map(([id, p]) => ({ id, name: p?.name ?? id }))
+          .map(([id, p]) => ({
+            id,
+            name: p?.name ?? id,
+            cwd: (p?.options as { cwd?: unknown } | undefined)?.cwd,
+          }))
         log.notice("registered claude-code providers", { providers: registered })
         return
       }
@@ -311,6 +340,7 @@ const server: OpenCodePlugin = async (input) => {
       log.notice("registered claude-code provider", {
         id: PROVIDER_ID,
         name: config.provider[PROVIDER_ID]?.name ?? PROVIDER_ID,
+        cwd: (config.provider[PROVIDER_ID]?.options as { cwd?: unknown } | undefined)?.cwd,
       })
     },
     // No `event` hook: MCP config drift is detected at turn start by the
