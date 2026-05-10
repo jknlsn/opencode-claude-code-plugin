@@ -1127,14 +1127,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             }
           }
 
-          const startResultFallback = () => {
+          // Wire-inactivity watchdog. Resets on every line received from the
+          // CLI; only fires if the CLI has emitted content and then gone
+          // silent on stdout for `delayMs` without sending a `result`. The
+          // previous design armed this on every text content_block_stop,
+          // which killed legitimate mid-turn think pauses (most visibly
+          // with sonnet between text-end and the next tool_use_start).
+          const startResultFallback = (delayMs = 60_000) => {
             clearFallbackTimer()
             if (!hasReceivedContent || controllerClosed) return
             resultFallbackTimer = setTimeout(() => {
               if (controllerClosed) return
-              log.warn("result fallback timer fired — closing stream without result event")
+              log.warn("result fallback timer fired — closing stream without result event", {
+                delayMs,
+              })
               closeHandler()
-            }, 5000)
+            }, delayMs)
           }
 
           const toolCallMap = new Map<
@@ -1192,6 +1200,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           if (!line.trim()) return
           if (controllerClosed) return
 
+          // Any line from the CLI counts as activity — reset the inactivity
+          // watchdog so mid-turn pauses between blocks don't get killed.
+          startResultFallback()
+
           try {
             const msg: ClaudeStreamMessage = JSON.parse(line)
 
@@ -1234,7 +1246,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
 
               if (block.type === "text") {
-                clearFallbackTimer()
                 textBlockIndices.add(idx)
                 if (block.text) {
                   if (!currentTextId) startTextBlock()
@@ -1248,7 +1259,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               }
 
               if (block.type === "tool_use" && block.id && block.name) {
-                clearFallbackTimer()
                 toolCallMap.set(idx, {
                   id: block.id,
                   name: block.name,
@@ -1345,7 +1355,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               if (textBlockIndices.has(idx)) {
                 endTextBlock()
                 textBlockIndices.delete(idx)
-                startResultFallback()
               }
 
               const tc = toolCallMap.get(idx)
@@ -1787,7 +1796,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               "abort signal received mid-turn, starting grace period",
               { cwd },
             )
-            startResultFallback()
+            // Abort grace period — short, since the user already asked to stop.
+            startResultFallback(5_000)
           })
         }
 
