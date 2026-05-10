@@ -386,20 +386,29 @@ export async function createProxyMcpServer(
 
 /** CLI-ready list of Claude tool names to disable, for each proxied tool. */
 export function disallowedToolFlags(tools: ProxyToolDef[]): string[] {
-  // Map our lowercase MCP tool names to Claude's capitalized internal names.
-  const nameMap: Record<string, string> = {
-    bash: "Bash",
-    read: "Read",
-    write: "Write",
-    edit: "Edit",
-    glob: "Glob",
-    grep: "Grep",
-    webfetch: "WebFetch",
+  // Map our lowercase MCP tool names to the Claude tool name(s) they replace.
+  // `edit` covers both `Edit` and `MultiEdit` because opencode has no
+  // MultiEdit equivalent; without disabling MultiEdit, Claude can batch
+  // file changes through it and bypass opencode's permission UI.
+  const nameMap: Record<string, string[]> = {
+    bash: ["Bash"],
+    read: ["Read"],
+    write: ["Write"],
+    edit: ["Edit", "MultiEdit"],
+    glob: ["Glob"],
+    grep: ["Grep"],
+    webfetch: ["WebFetch"],
   }
   const out: string[] = []
+  const seen = new Set<string>()
   for (const t of tools) {
     const mapped = nameMap[t.name.toLowerCase()]
-    if (mapped) out.push(mapped)
+    if (!mapped) continue
+    for (const claudeTool of mapped) {
+      if (seen.has(claudeTool)) continue
+      seen.add(claudeTool)
+      out.push(claudeTool)
+    }
   }
   return out
 }

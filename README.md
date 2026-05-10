@@ -204,14 +204,14 @@ By default, when Claude Code's CLI uses `Bash`, `Edit`, `Write`, etc., it execut
 
 ### Default proxied tools
 
-| `proxyTools` value | Claude built-in disabled | Proxy MCP tool exposed |
+| `proxyTools` value | Claude built-ins disabled | Proxy MCP tool exposed |
 |---|---|---|
 | `"Bash"` | `Bash` | `mcp__opencode_proxy__bash` |
-| `"Edit"` | `Edit` | `mcp__opencode_proxy__edit` |
+| `"Edit"` | `Edit`, `MultiEdit` | `mcp__opencode_proxy__edit` |
 | `"Write"` | `Write` | `mcp__opencode_proxy__write` |
 | `"WebFetch"` | `WebFetch` | `mcp__opencode_proxy__webfetch` |
 
-Only those four values are actually proxied; anything else you put in `proxyTools` is ignored. Note that `MultiEdit` is **not** disabled when you proxy `Edit` — Claude can still use its built-in `MultiEdit` directly, which won't go through opencode's permission UI. If that matters, manage `MultiEdit` separately through your Claude settings.
+Only those four values are actually proxied; anything else you put in `proxyTools` is ignored. Proxying `Edit` also disables `MultiEdit` — opencode has no batched-edit equivalent, so Claude is forced to fan out into single `Edit` calls that each flow through the permission UI.
 
 To turn off proxying entirely:
 
@@ -228,6 +228,7 @@ To turn off proxying entirely:
 ### What you give up
 
 - A small per-call latency hop through `127.0.0.1:<random>/mcp`.
+- Batched-edit ergonomics: with `Edit` proxied, Claude can no longer use `MultiEdit`, so a refactor that would have been one tool call becomes N single `Edit` calls.
 
 ---
 
