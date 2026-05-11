@@ -17,7 +17,7 @@ export const log = {
     console.error(fmt("NOTICE", msg, data))
   },
   warn(msg: string, data?: Record<string, unknown>) {
-    if (DEBUG) console.error(fmt("WARN", msg, data))
+    console.error(fmt("WARN", msg, data))
   },
   error(msg: string, data?: Record<string, unknown>) {
     console.error(fmt("ERROR", msg, data))
