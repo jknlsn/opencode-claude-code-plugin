@@ -17,6 +17,7 @@ export interface ClaudeCodeConfig {
   webSearch?: WebSearchRouting
   hotReloadMcp?: boolean
   proxyOpencodeMcpTools?: boolean
+  multiStepContinuation?: boolean
 }
 
 export type WebSearchRouting = "claude" | "disabled" | (string & {})
@@ -117,6 +118,18 @@ export interface ClaudeCodeProviderSettings {
    * an opencode round-trip).
    */
   proxyOpencodeMcpTools?: boolean
+
+  /**
+   * Append a short system-prompt hint that nudges Claude to chain
+   * multiple tool calls within a single turn instead of pausing for user
+   * confirmation between subtasks. Each turn boundary in opencode
+   * requires the user to manually press "continue" to resume, so for
+   * multi-step tasks this option reduces friction. Defaults to `true`.
+   *
+   * Set to `false` if you prefer the un-nudged model behavior (Claude
+   * decides when to end the turn entirely on its own).
+   */
+  multiStepContinuation?: boolean
 }
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max"

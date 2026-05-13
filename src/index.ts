@@ -68,6 +68,7 @@ export function createClaudeCode(
       webSearch: settings.webSearch,
       hotReloadMcp: settings.hotReloadMcp ?? true,
       proxyOpencodeMcpTools: settings.proxyOpencodeMcpTools ?? true,
+      multiStepContinuation: settings.multiStepContinuation ?? true,
     })
   }
 

@@ -111,7 +111,19 @@ function nearestWorkspaceAgentsPrompt(cwd: string): string | undefined {
   }
 }
 
-function buildAppendedSystemPrompt(cwd: string): string | undefined {
+const MULTI_STEP_TASK_HINT = `## Continuing through multi-step tasks
+
+opencode requires the user to press "continue" after each turn ends. When a
+task has multiple steps, do them all in one turn — chain tool calls rather
+than pausing for user confirmation between subtasks. End the turn only
+when the task is done, you need clarification on intent, or you hit a real
+blocker. The user can interrupt or abort at any time; turn endings should
+mark meaningful checkpoints, not every completed substep.`
+
+function buildAppendedSystemPrompt(
+  cwd: string,
+  includeMultiStepHint = true,
+): string | undefined {
   const parts: string[] = []
   const configRoot =
     process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config")
@@ -120,6 +132,7 @@ function buildAppendedSystemPrompt(cwd: string): string | undefined {
 
   if (globalAgents) parts.push(globalAgents)
   if (workspaceAgents && workspaceAgents !== globalAgents) parts.push(workspaceAgents)
+  if (includeMultiStepHint) parts.push(MULTI_STEP_TASK_HINT)
 
   const content = parts.join("\n\n")
   if (!content) return undefined
@@ -753,7 +766,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     // Pre-fetch opencode's MCP runtime status so the bridge overlays
     // UI-toggled state on top of disk config.
     const runtimeStatus = await getRuntimeMcpStatus()
-    const systemPromptFile = buildAppendedSystemPrompt(cwd)
+    const systemPromptFile = buildAppendedSystemPrompt(
+      cwd,
+      this.config.multiStepContinuation !== false,
+    )
     const cliArgs = buildCliArgs({
       sessionKey: sk,
       skipPermissions: this.config.skipPermissions !== false,
@@ -1259,7 +1275,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           )
           const systemPromptFile = activeProcess
             ? undefined
-            : buildAppendedSystemPrompt(cwd)
+            : buildAppendedSystemPrompt(
+                cwd,
+                self.config.multiStepContinuation !== false,
+              )
           const cliArgs = buildCliArgs({
             sessionKey: sk,
             skipPermissions,
