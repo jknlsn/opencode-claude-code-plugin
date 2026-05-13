@@ -67,6 +67,7 @@ export function createClaudeCode(
       proxyTools,
       webSearch: settings.webSearch,
       hotReloadMcp: settings.hotReloadMcp ?? true,
+      proxyOpencodeMcpTools: settings.proxyOpencodeMcpTools ?? true,
     })
   }
 

@@ -387,6 +387,26 @@ export interface BridgedMcp {
   path: string
   /** Stable hash of the merged opencode mcp block (pre-translation). */
   hash: string
+  /**
+   * Names of opencode MCP servers that were bridged into Claude CLI's
+   * `--mcp-config`. Excludes any servers passed in `excludeServers`.
+   */
+  serverNames: string[]
+  /**
+   * Names of every enabled opencode MCP server after merge + runtime
+   * overlay, regardless of whether they ended up bridged or excluded.
+   * Callers (e.g. the proxy-tool builder) use this to decide which
+   * `<server>_<tool>` IDs in opencode's tool catalog are MCP-origin.
+   */
+  allEnabledServerNames: string[]
+}
+
+/** Result of merging opencode's MCP config layers + applying runtime overlay. */
+export interface MergedMcp {
+  /** Server names whose final spec is enabled (or implicitly enabled). */
+  enabledServerNames: string[]
+  /** Stable hash of the merged (pre-translation) MCP block. */
+  hash: string
 }
 
 /**
@@ -415,6 +435,7 @@ export type RuntimeMcpStatus = Record<string, string>
 export function bridgeOpencodeMcp(
   cwd: string,
   runtimeStatus?: RuntimeMcpStatus,
+  excludeServers?: ReadonlySet<string>,
 ): BridgedMcp | null {
   const worktree = detectWorktree(cwd)
 
@@ -478,18 +499,57 @@ export function bridgeOpencodeMcp(
     }
   }
 
-  // Translate every still-enabled server.
-  const servers: Record<string, unknown> = {}
+  // Compute the set of enabled server names BEFORE exclusion so callers can
+  // tell whether a tool ID like `slack_conversations_add_message` came from
+  // an opencode MCP server (vs a built-in tool that happens to contain `_`).
+  const allEnabledServerNames: string[] = []
   for (const [name, spec] of Object.entries(merged)) {
     if (!spec || typeof spec !== "object") continue
-    const translated = translateServer(name, spec as Record<string, unknown>)
-    if (translated) servers[name] = translated
+    const enabled = (spec as { enabled?: unknown }).enabled
+    if (enabled === false) continue
+    allEnabledServerNames.push(name)
   }
 
-  if (Object.keys(servers).length === 0) return null
+  // Translate every still-enabled server, skipping any caller has asked us
+  // to exclude (because they're being routed through the proxy instead).
+  const servers: Record<string, unknown> = {}
+  const bridgedServerNames: string[] = []
+  for (const [name, spec] of Object.entries(merged)) {
+    if (!spec || typeof spec !== "object") continue
+    if (excludeServers?.has(name)) continue
+    const translated = translateServer(name, spec as Record<string, unknown>)
+    if (translated) {
+      servers[name] = translated
+      bridgedServerNames.push(name)
+    }
+  }
+
+  // Hash the pre-exclusion merged block so the hot-reload detector picks up
+  // upstream config changes even when every server is excluded.
+  const mergedBody = JSON.stringify({ mcpServers: merged }, null, 2)
+  const hash = crypto
+    .createHash("sha256")
+    .update(mergedBody)
+    .digest("hex")
+    .slice(0, 12)
+
+  if (Object.keys(servers).length === 0) {
+    const allEnabledServersExcluded =
+      excludeServers &&
+      allEnabledServerNames.length > 0 &&
+      allEnabledServerNames.every((name) => excludeServers.has(name))
+
+    if (!allEnabledServersExcluded) return null
+
+    return {
+      path: "",
+      hash,
+      serverNames: [],
+      allEnabledServerNames,
+    }
+  }
 
   const body = JSON.stringify({ mcpServers: servers }, null, 2)
-  const hash = crypto.createHash("sha256").update(body).digest("hex").slice(0, 12)
   const outPath = path.join(
     pluginTmpDir(),
     `mcp-${hash}.json`,
@@ -508,9 +568,15 @@ export function bridgeOpencodeMcp(
   log.info("bridged opencode MCP config", {
     target: outPath,
     hash,
-    servers: Object.keys(servers),
+    servers: bridgedServerNames,
+    excluded: excludeServers ? Array.from(excludeServers) : [],
   })
-  return { path: outPath, hash }
+  return {
+    path: outPath,
+    hash,
+    serverNames: bridgedServerNames,
+    allEnabledServerNames,
+  }
 }
 
 // Internal helpers exported for tests only.

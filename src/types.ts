@@ -16,6 +16,7 @@ export interface ClaudeCodeConfig {
   proxyTools?: string[]
   webSearch?: WebSearchRouting
   hotReloadMcp?: boolean
+  proxyOpencodeMcpTools?: boolean
 }
 
 export type WebSearchRouting = "claude" | "disabled" | (string & {})
@@ -100,6 +101,22 @@ export interface ClaudeCodeProviderSettings {
    * survives MCP changes until the chat is reset).
    */
   hotReloadMcp?: boolean
+
+  /**
+   * Route opencode MCP server tools through the in-process `opencode_proxy`
+   * MCP server instead of bridging them directly into Claude CLI's
+   * `--mcp-config`. With both layers configured for the same MCP server,
+   * direct bridging causes each tool invocation to execute twice — once by
+   * Claude CLI's own MCP child process and once by opencode. Routing through
+   * the proxy keeps a single execution site (opencode) while preserving the
+   * tool-call/result surface in opencode's UI and its permission prompts.
+   *
+   * Defaults to `true`. Set to `false` to restore the prior direct-bridge
+   * behavior (Claude CLI executes MCP tools itself; opencode also re-executes
+   * — accept the duplication if you need Claude to invoke the tool without
+   * an opencode round-trip).
+   */
+  proxyOpencodeMcpTools?: boolean
 }
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max"

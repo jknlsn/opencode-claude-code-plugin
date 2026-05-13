@@ -17,7 +17,10 @@ import type {
 import { mapTool } from "./tool-mapping.js"
 import { getClaudeUserMessage } from "./message-builder.js"
 import { bridgeOpencodeMcp, type RuntimeMcpStatus } from "./mcp-bridge.js"
-import { getRuntimeMcpStatus } from "./runtime-status.js"
+import {
+  getRuntimeMcpStatus,
+  fetchOpencodeToolList,
+} from "./runtime-status.js"
 import {
   getActiveProcess,
   spawnClaudeProcess,
@@ -207,22 +210,29 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     cwd: string,
     proxyConfigPath?: string,
     runtimeStatus?: RuntimeMcpStatus,
-  ): { paths: string[]; bridgedHash: string | null } {
+    excludeServers?: ReadonlySet<string>,
+  ): {
+    paths: string[]
+    bridgedHash: string | null
+    allEnabledServerNames: string[]
+  } {
     const paths = Array.isArray(this.config.mcpConfig)
       ? this.config.mcpConfig.slice()
       : this.config.mcpConfig
         ? [this.config.mcpConfig]
         : []
     let bridgedHash: string | null = null
+    let allEnabledServerNames: string[] = []
     if (this.config.bridgeOpencodeMcp !== false) {
-      const bridged = bridgeOpencodeMcp(cwd, runtimeStatus)
+      const bridged = bridgeOpencodeMcp(cwd, runtimeStatus, excludeServers)
       if (bridged) {
-        paths.push(bridged.path)
+        if (bridged.path) paths.push(bridged.path)
         bridgedHash = bridged.hash
+        allEnabledServerNames = bridged.allEnabledServerNames
       }
     }
     if (proxyConfigPath) paths.push(proxyConfigPath)
-    return { paths, bridgedHash }
+    return { paths, bridgedHash, allEnabledServerNames }
   }
 
   /** Resolve ProxyToolDef[] for the configured proxyTools names. */
@@ -238,6 +248,56 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       if (def) picked.push(def)
     }
     return picked.length > 0 ? picked : null
+  }
+
+  /**
+   * Resolve ProxyToolDef[] for opencode's MCP-bridged tools so they go
+   * through the in-process proxy instead of being bridged into Claude CLI's
+   * `--mcp-config`. Direct bridging causes double execution because both
+   * Claude CLI's own MCP child and opencode hold their own connection to
+   * the same server; routing through the proxy keeps a single execution
+   * site (opencode). Returns null when the feature is disabled, the SDK
+   * client is unavailable, or no MCP servers are configured.
+   */
+  private async resolvedProxyMcpTools(
+    allEnabledServerNames: string[],
+  ): Promise<ProxyToolDef[] | null> {
+    if (this.config.proxyOpencodeMcpTools === false) return null
+    if (this.config.bridgeOpencodeMcp === false) return null
+    if (allEnabledServerNames.length === 0) return null
+
+    const items = await fetchOpencodeToolList(
+      this.config.provider,
+      this.modelId,
+      this.config.cwd,
+    )
+    if (!items || items.length === 0) return null
+
+    // opencode names MCP tools `<server>_<originalToolName>`. Match the
+    // longest server name prefix first so e.g. `slack_intl_*` resolves to
+    // server `slack_intl` not `slack`.
+    const serversByLengthDesc = [...allEnabledServerNames].sort(
+      (a, b) => b.length - a.length,
+    )
+    const out: ProxyToolDef[] = []
+    const seen = new Set<string>()
+    for (const item of items) {
+      const matchedServer = serversByLengthDesc.find(
+        (name) => item.id === name || item.id.startsWith(`${name}_`),
+      )
+      if (!matchedServer) continue
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      out.push({
+        name: item.id,
+        description: item.description ?? "",
+        inputSchema:
+          item.parameters && typeof item.parameters === "object"
+            ? item.parameters
+            : { type: "object", properties: {} },
+      })
+    }
+    return out.length > 0 ? out : null
   }
 
   /**
@@ -611,8 +671,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
     // When selective proxying is enabled, doGenerate must not bypass the
     // proxy path. Reuse doStream and aggregate its events so proxied tools
-    // still route through opencode permissions/execution.
-    if (scope === "tools" && this.resolvedProxyTools()) {
+    // still route through opencode permissions/execution. Same for
+    // opencode MCP proxying — doStream is the only path that wires up the
+    // proxy server with the dynamically-discovered MCP tool defs.
+    if (
+      scope === "tools" &&
+      (this.resolvedProxyTools() ||
+        (this.config.proxyOpencodeMcpTools !== false &&
+          this.config.bridgeOpencodeMcp !== false))
+    ) {
       return this.doGenerateViaStream(options)
     }
 
@@ -1143,8 +1210,33 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         }
 
         const setup = async () => {
-          if (!proxyServer && resolvedProxy) {
-            proxyServer = await self.ensureProxyServer(resolvedProxy, sk)
+          // First pass: discover which opencode MCP servers would be bridged.
+          // We use this to decide which ones to re-route through the proxy
+          // instead. No --mcp-config path is consumed here; it's recomputed
+          // below with the exclusion set in place.
+          const discovery = self.effectiveMcpConfig(
+            cwd,
+            undefined,
+            runtimeStatus,
+          )
+
+          // Fetch the proxy MCP tools (one ProxyToolDef per opencode MCP-
+          // bridged tool). If discovery returns nothing or the SDK is
+          // unreachable, this is null and we fall back to direct bridging.
+          const proxyMcpTools = await self.resolvedProxyMcpTools(
+            discovery.allEnabledServerNames,
+          )
+          const excludeServers: ReadonlySet<string> | undefined = proxyMcpTools
+            ? new Set(discovery.allEnabledServerNames)
+            : undefined
+
+          const combinedProxyTools: ProxyToolDef[] | null =
+            resolvedProxy || proxyMcpTools
+              ? [...(resolvedProxy ?? []), ...(proxyMcpTools ?? [])]
+              : null
+
+          if (!proxyServer && combinedProxyTools) {
+            proxyServer = await self.ensureProxyServer(combinedProxyTools, sk)
           }
 
           const proxyDisallowed = resolvedProxy ? disallowedToolFlags(resolvedProxy) : []
@@ -1155,6 +1247,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             cwd,
             proxyServer?.configPath(),
             runtimeStatus,
+            excludeServers,
           )
           const systemPromptFile = activeProcess
             ? undefined

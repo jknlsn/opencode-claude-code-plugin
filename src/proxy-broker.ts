@@ -10,12 +10,15 @@ export interface PendingProxyCall {
 }
 
 type InternalPending = PendingProxyCall & {
+  createdAt: number
+  timer: ReturnType<typeof setTimeout>
   resolve(result: ProxyToolResult): void
   reject(error: Error): void
 }
 
 const pendingBySession = new Map<string, InternalPending>()
 const emitter = new EventEmitter()
+const PENDING_PROXY_CALL_TIMEOUT_MS = 10 * 60 * 1000
 
 function eventName(sessionKey: string) {
   return `pending:${sessionKey}`
@@ -36,17 +39,53 @@ export function queuePendingProxyCall(
 ): PendingProxyCall {
   const existing = pendingBySession.get(sessionKey)
   if (existing) {
+    if (Date.now() - existing.createdAt < PENDING_PROXY_CALL_TIMEOUT_MS) {
+      call.reject(
+        new Error(`Another proxy tool call is already pending for ${sessionKey}`),
+      )
+      log.warn("rejected overlapping proxy call", {
+        sessionKey,
+        existingToolCallId: existing.toolCallId,
+        existingToolName: existing.toolName,
+        toolCallId: call.id,
+        toolName: call.toolName,
+      })
+      return existing
+    }
+
+    clearTimeout(existing.timer)
     existing.reject(
-      new Error(`Another proxy tool call is already pending for ${sessionKey}`),
+      new Error(
+        `Stale proxy tool call expired after ${PENDING_PROXY_CALL_TIMEOUT_MS}ms for ${sessionKey}`,
+      ),
     )
     pendingBySession.delete(sessionKey)
   }
+
+  const timer = setTimeout(() => {
+    const current = pendingBySession.get(sessionKey)
+    if (!current || current.toolCallId !== call.id) return
+    pendingBySession.delete(sessionKey)
+    current.reject(
+      new Error(
+        `Proxy tool call '${call.toolName}' timed out after ${PENDING_PROXY_CALL_TIMEOUT_MS}ms waiting for opencode to resolve the call`,
+      ),
+    )
+    log.warn("timed out pending proxy call", {
+      sessionKey,
+      toolCallId: call.id,
+      toolName: call.toolName,
+      timeoutMs: PENDING_PROXY_CALL_TIMEOUT_MS,
+    })
+  }, PENDING_PROXY_CALL_TIMEOUT_MS)
 
   const pending: InternalPending = {
     sessionKey,
     toolCallId: call.id,
     toolName: call.toolName,
     input: call.input,
+    createdAt: Date.now(),
+    timer,
     resolve: call.resolve,
     reject: call.reject,
   }
@@ -73,6 +112,7 @@ export function resolvePendingProxyCall(
   const pending = pendingBySession.get(sessionKey)
   if (!pending) return false
   pendingBySession.delete(sessionKey)
+  clearTimeout(pending.timer)
   pending.resolve(result)
   log.info("resolved pending proxy call", {
     sessionKey,
@@ -89,6 +129,7 @@ export function rejectPendingProxyCall(
   const pending = pendingBySession.get(sessionKey)
   if (!pending) return false
   pendingBySession.delete(sessionKey)
+  clearTimeout(pending.timer)
   pending.reject(error)
   log.warn("rejected pending proxy call", {
     sessionKey,
