@@ -66,12 +66,26 @@ import { dirname, join } from "node:path"
  * spawn Claude CLI on an empty turn and the model would reply with a
  * stub like "Did you mean to send a message?".
  */
-function hasNewUserContent(
+export function hasNewUserContent(
   prompt: LanguageModelV3CallOptions["prompt"],
 ): boolean {
   for (let i = prompt.length - 1; i >= 0; i--) {
     const msg = prompt[i]
     if (msg.role === "assistant") return false
+    // Tool-result turns from opencode's outer loop arrive in `tool`-role
+    // messages (AI SDK V3 shape). Treat any tool-result part as new
+    // content so the short-circuit doesn't drop turns where opencode is
+    // delivering the result for a still-pending proxy MCP call — letting
+    // that fire `stop` is what was forcing the user to press "continue".
+    if (msg.role === "tool") {
+      const content: any = msg.content
+      if (Array.isArray(content)) {
+        for (const part of content as any[]) {
+          if (part?.type === "tool-result") return true
+        }
+      }
+      continue
+    }
     if (msg.role !== "user") continue
     const content: any = msg.content
     if (typeof content === "string") {
