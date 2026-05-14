@@ -332,3 +332,60 @@ test("v0.4.11 'let me know when' stops as question", () => {
   )
   assert.deepEqual(result, { continue: false, reason: "question" })
 })
+
+// ─── v0.4.12 regression tests ──────────────────────────────────────────────
+
+test("v0.4.12 'over to you' stops as question", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "I've prepared the patch and tests are green. Over to you.",
+      hadReasoning: true, hadToolActivity: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})
+
+test("v0.4.12 'your turn' stops as question", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "Reviewed the diff and flagged three concerns. Your turn to pick a direction.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})
+
+test("v0.4.12 'all yours' stops as question", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "Branch is rebased and the PR template filled. The rest is all yours.",
+      hadReasoning: true, hadToolActivity: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})
+
+test("v0.4.12 'let me know how' stops as question", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "Three viable paths surfaced. Let me know how you'd like to proceed.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})
+
+test("v0.4.12 'i'm here' stops as question", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "All staged for the release. I'm here when you're ready to ship.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})

@@ -160,7 +160,13 @@ function looksLikeQuestion(text: string): boolean {
   // designed to suppress at the message-builder layer. This adds a second
   // line of defense at the model-output layer for cases where the model
   // organically produces the same idiom.
-  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|let me know when|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|up to you|ready to (?:ship|go|proceed|merge)|ready (?:when|whenever|once|if) you|standing by|i'?ll stand ?by|happy to (?:ship|go|proceed|merge))\b/.test(normalized)
+  //
+  // v0.4.12 additions: over to you / your turn / all yours / let me know
+  // how / i'm here. Defensive coverage of soft-proceed idioms in the
+  // model's vocabulary. "i'm here" has the highest FP risk ("I'm here to
+  // help with X" is a conversational opener) but cost of FP is one extra
+  // continue press — safe direction.
+  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|let me know when|let me know how|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|your turn|over to you|all yours|up to you|ready to (?:ship|go|proceed|merge)|ready (?:when|whenever|once|if) you|standing by|i'?ll stand ?by|i'?m here|happy to (?:ship|go|proceed|merge))\b/.test(normalized)
 }
 
 function looksLikeBlocker(text: string): boolean {

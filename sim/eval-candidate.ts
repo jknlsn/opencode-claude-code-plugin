@@ -21,6 +21,13 @@
  *             — and the meta-irony that "standing by" is the exact stub
  *             commit 49345e3 fought against at the CLI-stub layer.
  *
+ * v0.4.12 SHIPPED additions (defensive — user-requested preemptive):
+ *   Tweak 7 — Question regex picks up "over to you" / "your turn" /
+ *             "all yours" / "let me know how" / "i'm here".
+ *             User-requested defensive coverage of soft-proceed idioms.
+ *             "i'm here" is FP-prone on conversational openers — accepted
+ *             since cost of FP is one extra continue press.
+ *
  * EXPERIMENTAL — NOT SHIPPED:
  *   Tweak 1 — `looksLikeMidTaskContinuation` override of completion-keyword
  *             detection. Defined below for documentation/future reference
@@ -68,8 +75,9 @@ function looksLikeQuestion(text: string): boolean {
   // ending in a period. FP risk on inline code (`result?.value`) — accepted;
   // the cost is one extra "continue" press if it hits.
   if (t.includes("?")) return true
-  // v0.4.11: add "ready when you are" / "standing by" / "let me know when".
-  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|let me know when|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|up to you|ready to (?:ship|go|proceed|merge)|ready (?:when|whenever|once|if) you|standing by|i'?ll stand ?by|happy to (?:ship|go|proceed|merge))\b/.test(t)
+  // v0.4.11: "ready when you are" / "standing by" / "let me know when".
+  // v0.4.12: "over to you" / "your turn" / "all yours" / "let me know how" / "i'm here".
+  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|let me know when|let me know how|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|your turn|over to you|all yours|up to you|ready to (?:ship|go|proceed|merge)|ready (?:when|whenever|once|if) you|standing by|i'?ll stand ?by|i'?m here|happy to (?:ship|go|proceed|merge))\b/.test(t)
 }
 
 function looksLikeBlocker(text: string): boolean {
@@ -262,6 +270,36 @@ const cases: Case[] = [
       hadReasoning: true, hadToolActivity: true,
     },
     expected: "stop", rationale: "Self-referential — the exact stub commit 49345e3 was designed to suppress at the CLI layer; v0.4.11 adds it at the model-output layer too" },
+  { id: "F08", category: "real-fire-repro", label: "v0.4.12 'over to you'",
+    snapshot: {
+      text: "I've prepared the patch and tests are green. Over to you.",
+      hadReasoning: true, hadToolActivity: true,
+    },
+    expected: "stop", rationale: "Defensive add; canonical handoff phrase" },
+  { id: "F09", category: "real-fire-repro", label: "v0.4.12 'your turn'",
+    snapshot: {
+      text: "Reviewed the diff and flagged three concerns. Your turn to pick a direction.",
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "Defensive add; explicit 'your move' variant" },
+  { id: "F10", category: "real-fire-repro", label: "v0.4.12 'all yours'",
+    snapshot: {
+      text: "Branch is rebased and the PR template filled. The rest is all yours.",
+      hadReasoning: true, hadToolActivity: true,
+    },
+    expected: "stop", rationale: "Defensive add; handoff idiom" },
+  { id: "F11", category: "real-fire-repro", label: "v0.4.12 'let me know how'",
+    snapshot: {
+      text: "Three viable paths surfaced. Let me know how you'd like to proceed.",
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "Defensive add; sibling of let-me-know-if/whether/what/when" },
+  { id: "F12", category: "real-fire-repro", label: "v0.4.12 'i'm here'",
+    snapshot: {
+      text: "All staged for the release. I'm here when you're ready to ship.",
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "Defensive add; FP risk on conversational openers — accepted, safe direction" },
 
   { id: "G01", category: "midtask-keyword-fp", label: "'updated' mid-task",
     snapshot: { text: "Updated the cache, now checking for stale entries before the next sync.", hadToolActivity: true }, expected: "continue", rationale: "" },
