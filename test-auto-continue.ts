@@ -291,3 +291,44 @@ test("v0.4.10 tweak 5d: A-class continues unaffected (no '?' or soft-proceed phr
   )
   assert.deepEqual(result, { continue: true, reason: "non-final-progress" })
 })
+
+// ─── v0.4.11 regression tests ──────────────────────────────────────────────
+
+test("v0.4.11 'ready when you are' stops as question", () => {
+  // Real fire from 2026-05-14T04:00:41 — short answer ending in this
+  // canonical 'your move' phrase fired 4-δ inappropriately on v0.4.10.
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "The standing-by stub lives in training, not just the CLI's empty-turn behavior. Ready when you are.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})
+
+test("v0.4.11 'standing by' stops as question (the meta-irony stub)", () => {
+  // Commit 49345e3 originally fought 'No input received. Standing by.' at
+  // the message-builder layer (suppressing the CLI stub on empty turns).
+  // This test guards against the model organically producing the same
+  // idiom at the response layer.
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "All done on my side; the rest is on you. Standing by.",
+      hadReasoning: true, hadToolActivity: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})
+
+test("v0.4.11 'let me know when' stops as question", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "I've staged everything for the release. Let me know when you've reviewed.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})

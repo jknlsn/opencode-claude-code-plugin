@@ -153,7 +153,14 @@ function looksLikeQuestion(text: string): boolean {
   // and end with a period. FP risk on inline code (`result?.value`) is
   // accepted — cost is one extra "continue" press, in the safe direction.
   if (normalized.includes("?")) return true
-  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|up to you|ready to (?:ship|go|proceed|merge)|happy to (?:ship|go|proceed|merge))\b/.test(normalized)
+  // v0.4.11 additions: ready when you are / standing by / i'll stand by /
+  // let me know when. These are awaiting-input idioms with no '?'. The
+  // "standing by" addition has historical significance — it's the exact
+  // stub phrase Claude CLI emits on empty turns that commit 49345e3 was
+  // designed to suppress at the message-builder layer. This adds a second
+  // line of defense at the model-output layer for cases where the model
+  // organically produces the same idiom.
+  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|let me know when|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|up to you|ready to (?:ship|go|proceed|merge)|ready (?:when|whenever|once|if) you|standing by|i'?ll stand ?by|happy to (?:ship|go|proceed|merge))\b/.test(normalized)
 }
 
 function looksLikeBlocker(text: string): boolean {

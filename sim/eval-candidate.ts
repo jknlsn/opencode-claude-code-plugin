@@ -14,6 +14,13 @@
  *             "sounds good", "ready to ship", etc.) treated as questions.
  *             Catches F02-shape over-eager fires observed in real plugin.log.
  *
+ * v0.4.11 SHIPPED additions (also push toward STOP):
+ *   Tweak 6 — Question regex picks up "ready when/whenever/once/if you" /
+ *             "standing by" / "i'll stand by" / "let me know when".
+ *             Triggered by 04:00:41 real fire on "Ready when you are."
+ *             — and the meta-irony that "standing by" is the exact stub
+ *             commit 49345e3 fought against at the CLI-stub layer.
+ *
  * EXPERIMENTAL — NOT SHIPPED:
  *   Tweak 1 — `looksLikeMidTaskContinuation` override of completion-keyword
  *             detection. Defined below for documentation/future reference
@@ -61,7 +68,8 @@ function looksLikeQuestion(text: string): boolean {
   // ending in a period. FP risk on inline code (`result?.value`) — accepted;
   // the cost is one extra "continue" press if it hits.
   if (t.includes("?")) return true
-  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|up to you|ready to (?:ship|go|proceed|merge)|happy to (?:ship|go|proceed|merge))\b/.test(t)
+  // v0.4.11: add "ready when you are" / "standing by" / "let me know when".
+  return /\b(please confirm|can you confirm|should i|would you like|do you want|which option|choose|pick one|need your|need you to|what would you like|let me know if|let me know whether|let me know what|let me know when|if you'?d like|if you want to|tell me if|tell me which|tell me whether|say (?:go|yes|no)|push back|sign off|sounds? (?:good|right)|your call|your move|up to you|ready to (?:ship|go|proceed|merge)|ready (?:when|whenever|once|if) you|standing by|i'?ll stand ?by|happy to (?:ship|go|proceed|merge))\b/.test(t)
 }
 
 function looksLikeBlocker(text: string): boolean {
@@ -242,6 +250,18 @@ const cases: Case[] = [
       hadReasoning: true, hadToolActivity: true,
     },
     expected: "stop", rationale: "Reconstruction of 02:48:11 over-eager fire — 'if you want to' is the awaiting-input signal" },
+  { id: "F06", category: "real-fire-repro", label: "04:00:41 'Ready when you are' (today's v0.4.11 fire)",
+    snapshot: {
+      text: "Yes — real idiom, 'ready and waiting.' But you caught the irony. It's the exact stub Claude CLI used to emit on empty turns. The habit lives in training, not just in Claude CLI's empty-turn behavior. Ready when you are.",
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "Real fire from 04:00:41 — 'Ready when you are' is the canonical 'your move' phrase; v0.4.11 adds it explicitly" },
+  { id: "F07", category: "real-fire-repro", label: "'Standing by' — the meta-irony stub",
+    snapshot: {
+      text: "All done on my side; the rest is on you. Standing by.",
+      hadReasoning: true, hadToolActivity: true,
+    },
+    expected: "stop", rationale: "Self-referential — the exact stub commit 49345e3 was designed to suppress at the CLI layer; v0.4.11 adds it at the model-output layer too" },
 
   { id: "G01", category: "midtask-keyword-fp", label: "'updated' mid-task",
     snapshot: { text: "Updated the cache, now checking for stale entries before the next sync.", hadToolActivity: true }, expected: "continue", rationale: "" },
