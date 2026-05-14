@@ -179,13 +179,26 @@ function looksLikeBlocker(text: string): boolean {
 
 function looksLikeFinalAnswer(text: string): boolean {
   const normalized = normalizeVisibleText(text).toLowerCase()
+  if (looksLikeQuestion(normalized) || looksLikeBlocker(normalized)) return false
+  // v0.4.15: strong-completion phrases bypass the 30-char length floor.
+  // These are unambiguous end-of-turn signals at any text length — even
+  // a short standalone "We're done." should stop.
+  if (/\b(we'?re done|we are done|all done|all set)\b/.test(normalized)) {
+    return true
+  }
   // v0.4.10 tweak 4: floor lowered 40 → 30 chars. Catches short clean
   // completions like "Task is now completely done. Pushed." (36 chars)
   // while keeping a buffer against ambiguous short narration.
   if (normalized.length < 30) return false
-  if (looksLikeQuestion(normalized) || looksLikeBlocker(normalized)) return false
-  return /\b(done|completed|fixed|implemented|verified|published|released|sent|delivered|updated)\b/.test(normalized) ||
-    /\b(checks?|tests?) passed\b/.test(normalized) ||
+  // v0.4.15: keyword list extended with deploy/ship verbs the model
+  // routinely uses at turn end (shipped, deployed, merged, tagged, live,
+  // pinned). FP risk highest on "live" — "live data" mid-turn could match
+  // — but cost of FP is one extra continue press, safe direction.
+  return /\b(done|completed|fixed|implemented|verified|published|released|sent|delivered|updated|shipped|deployed|merged|tagged|live|pinned)\b/.test(normalized) ||
+    // v0.4.15: also accept present-tense "tests pass" / "checks pass".
+    // Real fire 03:31 ended in "78/78 tests pass" — past-tense-only regex
+    // missed it.
+    /\b(checks?|tests?) (?:pass|passes|passed)\b/.test(normalized) ||
     /\b(summary|what changed|verification)\b/.test(normalized)
 }
 

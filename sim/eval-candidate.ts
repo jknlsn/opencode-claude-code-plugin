@@ -28,6 +28,16 @@
  *             "i'm here" is FP-prone on conversational openers — accepted
  *             since cost of FP is one extra continue press.
  *
+ * v0.4.15 SHIPPED additions (also push toward STOP):
+ *   Tweak 8 — Final-answer keyword regex picks up "shipped|deployed|
+ *             merged|tagged|live|pinned". Driven by 03:31 real fire on
+ *             "v0.4.13 on npm" — completion verbs the model uses at
+ *             turn end that weren't in the original v0.4.5 keyword list.
+ *   Tweak 9 — Strong-completion phrases ("we're done", "we are done",
+ *             "all done", "all set") bypass the 30-char length floor.
+ *             User-requested. These are unambiguous end-of-turn signals
+ *             at any text length.
+ *
  * EXPERIMENTAL — NOT SHIPPED:
  *   Tweak 1 — `looksLikeMidTaskContinuation` override of completion-keyword
  *             detection. Defined below for documentation/future reference
@@ -99,18 +109,26 @@ function looksLikeMidTaskContinuation(text: string): boolean {
 
 function looksLikeFinalAnswer(text: string): boolean {
   const t = normalize(text).toLowerCase()
+  if (looksLikeQuestion(t) || looksLikeBlocker(t)) return false
+  // v0.4.15 strong-completion phrases (bypass length floor):
+  if (/\b(we'?re done|we are done|all done|all set)\b/.test(t)) {
+    return true
+  }
   // Tweak 4: floor lowered 40 → 30. Catches "Task is now completely done.
   // Pushed." (36 chars) without going so low that ambiguous short text
   // ("Done with phase 1.") could match.
   if (t.length < 30) return false
-  if (looksLikeQuestion(t) || looksLikeBlocker(t)) return false
   // Tweak 1 (experimental, NOT shipped in v0.4.10):
   //   if (looksLikeMidTaskContinuation(t)) return false
   // The mid-task-continuation override widens auto-continue, opposite of
   // safe failure direction. No real-world G-class fires observed. Kept
   // available below for future evaluation.
-  return /\b(done|completed|fixed|implemented|verified|published|released|sent|delivered|updated)\b/.test(t) ||
-    /\b(checks?|tests?) passed\b/.test(t) ||
+  // v0.4.15: keyword list extended with shipped|deployed|merged|tagged|
+  // live|pinned (deploy/ship verbs at turn end). Also "tests pass"
+  // present tense (was past-tense-only) — fixes real fire 03:31 that
+  // ended in "78/78 tests pass".
+  return /\b(done|completed|fixed|implemented|verified|published|released|sent|delivered|updated|shipped|deployed|merged|tagged|live|pinned)\b/.test(t) ||
+    /\b(checks?|tests?) (?:pass|passes|passed)\b/.test(t) ||
     /\b(summary|what changed|verification)\b/.test(t)
 }
 
@@ -300,6 +318,36 @@ const cases: Case[] = [
       hadReasoning: true,
     },
     expected: "stop", rationale: "Defensive add; FP risk on conversational openers — accepted, safe direction" },
+  { id: "F13", category: "real-fire-repro", label: "v0.4.15 'shipped' as keyword (real fire 03:31)",
+    snapshot: {
+      text: "v0.4.13 on npm, pin matches, 78/78 tests pass, sim corpus + regression bench preserved as future leverage.",
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "Real fire shape — 'shipped' completion verb wasn't in v0.4.14 keyword list" },
+  { id: "F14", category: "real-fire-repro", label: "v0.4.15 'deployed/merged/tagged'",
+    snapshot: {
+      text: "Patch merged to master, tagged v0.4.15, deployed via CI. Restart at your convenience.",
+      hadReasoning: true, hadToolActivity: true,
+    },
+    expected: "stop", rationale: "Multiple v0.4.15 keywords in one sentence" },
+  { id: "F15", category: "real-fire-repro", label: "v0.4.15 'pinned' as keyword",
+    snapshot: {
+      text: "Plugin pinned at @0.4.15 in opencode.jsonc. Restart loads it.",
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "'pinned' added as completion verb in v0.4.15" },
+  { id: "F16", category: "real-fire-repro", label: "v0.4.15 'we're done' short message bypasses length floor",
+    snapshot: {
+      text: "We're done.",  // 11 chars — below 30-char threshold
+      hadReasoning: true,
+    },
+    expected: "stop", rationale: "Strong-completion phrase should bypass length floor" },
+  { id: "F17", category: "real-fire-repro", label: "v0.4.15 'all set' short message",
+    snapshot: {
+      text: "All set.",  // 8 chars
+      hadReasoning: true, hadToolActivity: true,
+    },
+    expected: "stop", rationale: "Strong-completion phrase at minimal length" },
 
   { id: "G01", category: "midtask-keyword-fp", label: "'updated' mid-task",
     snapshot: { text: "Updated the cache, now checking for stale entries before the next sync.", hadToolActivity: true }, expected: "continue", rationale: "" },

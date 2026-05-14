@@ -389,3 +389,78 @@ test("v0.4.12 'i'm here' stops as question", () => {
   )
   assert.deepEqual(result, { continue: false, reason: "question" })
 })
+
+// ─── v0.4.15 regression tests ──────────────────────────────────────────────
+
+test("v0.4.15 'shipped' as final-answer keyword", () => {
+  // Real fire shape from 03:31 — long completion narrative ending with
+  // 'shipped'-style verbs that weren't in the v0.4.14 keyword list.
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "v0.4.15 on npm, pin matches, 78/78 tests pass, sim corpus preserved as future leverage. Shipped.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "final-answer" })
+})
+
+test("v0.4.15 'deployed/merged/tagged' as keywords", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "Patch merged to master, tagged v0.4.15, deployed via CI. Restart at your convenience.",
+      hadReasoning: true, hadToolActivity: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "final-answer" })
+})
+
+test("v0.4.15 'pinned' as keyword", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "Plugin pinned at @0.4.15 in opencode.jsonc. Restart loads it.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "final-answer" })
+})
+
+test("v0.4.15 short 'We're done.' bypasses length floor", () => {
+  // 11 chars — would have been below the 30-char threshold and missed
+  // pre-v0.4.15. The strong-completion phrase override catches it.
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "We're done.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "final-answer" })
+})
+
+test("v0.4.15 short 'All set.' bypasses length floor", () => {
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "All set.",
+      hadReasoning: true, hadToolActivity: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "final-answer" })
+})
+
+test("v0.4.15 'tests pass' (present tense) stops as final-answer", () => {
+  // Real fire 03:31 ended in "78/78 tests pass" — the v0.4.14 regex
+  // matched only past tense ("tests passed") so the fire was missed.
+  // This case is the actual 03:31 message text.
+  const result = shouldAutoContinueIncompleteTurn(
+    state(),
+    snap({
+      text: "v0.4.13 on npm, pin matches, 78/78 tests pass, sim corpus + regression bench preserved as future leverage.",
+      hadReasoning: true,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "final-answer" })
+})
