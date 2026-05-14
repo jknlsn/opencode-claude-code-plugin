@@ -235,6 +235,23 @@ Now continuing with the current message:
           }
         }
       }
+    } else if (msg.role === "tool") {
+      // AI SDK V3 delivers tool results in `tool`-role messages, not `user`.
+      // Without this branch we'd hit the empty-content sentinel path and
+      // send "(empty)" to Claude CLI instead of the actual tool result —
+      // forcing the user to press "continue" between proxy tool calls.
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content as any[]) {
+          if (part?.type === "tool-result") {
+            const p = part as any
+            content.push({
+              type: "tool_result",
+              tool_use_id: p.toolCallId,
+              content: getToolResultText(p),
+            })
+          }
+        }
+      }
     }
   }
 
