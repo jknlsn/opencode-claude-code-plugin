@@ -319,30 +319,68 @@ Set `permissionMode: "plan"` to forward `--permission-mode plan` to Claude. The 
 - **Lazy `cwd`.** The working directory is re-resolved at every request, so opencode's project-aware behavior works without restarting the plugin.
 - **Variants survive merge.** opencode recalculates variant lists after the plugin loads; the plugin re-injects defaults into runtime config so your variants don't disappear.
 
-## Debug logging
+## Logging
 
-Two independent knobs:
+Configure via `opencode.jsonc` (launch-method-independent) or env vars
+(temporary override for a single process). The plugin has four orthogonal
+knobs:
 
-```bash
-# Verbose logging to stderr (opencode surfaces stderr as UI warnings):
-DEBUG=opencode-claude-code opencode
+| Field | Values | Default | Effect |
+|---|---|---|---|
+| `file` | `true \| false` | `false` | Persist log entries to disk |
+| `dir` | path string | `~/.local/share/opencode-claude-code/` | Custom file location |
+| `mode` | `"silent" \| "debug"` | `"silent"` | TUI policy |
+| `level` | `"debug" \| "info" \| "notice" \| "warn" \| "error"` | `"info"` | Minimum level to emit |
 
-# Persistent file log (default: OFF — file is not created at all):
-OPENCODE_CLAUDE_CODE_LOG_FILE=1 opencode
+Rails-style threshold: anything below `level` is dropped before either
+destination decides what to do. `mode: "silent"` routes DEBUG/INFO/NOTICE
+to file only and lets WARN/ERROR bubble in the TUI (they always do).
+`mode: "debug"` additionally echoes every emitted level to the TUI (which
+opencode surfaces as warning bubbles).
 
-# Both:
-DEBUG=opencode-claude-code OPENCODE_CLAUDE_CODE_LOG_FILE=1 opencode
+**Recommended dev setup** — capture audit trail to disk, keep TUI quiet:
+
+```jsonc
+"@khalilgharbaoui/opencode-claude-code-plugin": {
+  "logging": { "file": true }
+}
 ```
 
-When `OPENCODE_CLAUDE_CODE_LOG_FILE` is set to any truthy value (`1`,
-`true`, `yes`, `on`), the plugin writes NOTICE/WARN/ERROR (plus INFO and
-DEBUG when `DEBUG=opencode-claude-code` is also set) to
-`~/.local/share/opencode-claude-code/plugin.log` with 5MB rotation. Override
-the directory with `OPENCODE_CLAUDE_CODE_LOG_DIR=/custom/path`.
+**Full firehose for deep debugging** (every DEBUG stream event captured):
 
-Default is off so the plugin doesn't accrete a log file on every user's
-disk. Opt in when you need to inspect auto-continue decisions, broker
-state, or other plugin internals.
+```jsonc
+"logging": { "file": true, "level": "debug" }
+```
+
+**Live TUI noise** (everything echoes to opencode's stderr → warning bubbles):
+
+```jsonc
+"logging": { "file": true, "mode": "debug" }
+```
+
+### Env-var overrides
+
+Set explicitly to override config for one process — useful for one-off
+debugging without editing `opencode.jsonc`:
+
+```bash
+OPENCODE_CLAUDE_CODE_LOG_FILE=1 opencode          # file on
+OPENCODE_CLAUDE_CODE_LOG_FILE=0 opencode          # file off (overrides config:true)
+OPENCODE_CLAUDE_CODE_LOG_DIR=/tmp/cc opencode     # custom dir
+OPENCODE_CLAUDE_CODE_LOG_LEVEL=debug opencode     # capture every level
+DEBUG=opencode-claude-code opencode               # promote to mode:"debug"
+```
+
+Boolean env vars accept `1/true/on/yes` for on and `0/false/no/off` for
+off; empty / unset falls through to config. Invalid `level` values fall
+through to config.
+
+### Default behavior (no config, no env)
+
+Nothing persists; only WARN and ERROR bubble in the TUI. The plugin
+doesn't accrete a log file on every user's disk by default — opt in when
+you need to inspect auto-continue decisions, broker state, or other
+plugin internals.
 
 ## Known limitations
 

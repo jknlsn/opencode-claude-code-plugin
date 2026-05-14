@@ -2,36 +2,108 @@ import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
-const DEBUG = process.env.DEBUG?.includes("opencode-claude-code") ?? false
+export type LogLevel = "debug" | "info" | "notice" | "warn" | "error"
+export type LogMode = "silent" | "debug"
 
-const LOG_DIR =
-  process.env.OPENCODE_CLAUDE_CODE_LOG_DIR ??
-  join(homedir(), ".local", "share", "opencode-claude-code")
-const LOG_FILE = join(LOG_DIR, "plugin.log")
-const MAX_LOG_BYTES = 5 * 1024 * 1024 // 5 MB
-
-// v0.4.14: File logging is opt-in via OPENCODE_CLAUDE_CODE_LOG_FILE.
-// Before this, every user of the plugin had ~/.local/share/opencode-claude-
-// code/plugin.log silently accreting on their disk with full message
-// contents — a privacy and disk-hygiene mistake. Default is now NO file
-// logging. Developers opt in with any truthy value; UI behavior is
-// unaffected (controlled by DEBUG=opencode-claude-code separately).
-function isTruthyEnv(v: string | undefined): boolean {
-  if (v == null) return false
-  const s = v.toLowerCase().trim()
-  if (s === "") return false
-  return s !== "0" && s !== "false" && s !== "no" && s !== "off"
+export interface LoggerConfig {
+  file: boolean
+  dir: string | null
+  mode: LogMode
+  level: LogLevel
 }
 
-const LOG_FILE_ENABLED = isTruthyEnv(process.env.OPENCODE_CLAUDE_CODE_LOG_FILE)
+const LEVEL_RANK: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  notice: 2,
+  warn: 3,
+  error: 4,
+}
 
+const MAX_LOG_BYTES = 5 * 1024 * 1024 // 5 MB
+const DEFAULT_DIR = join(homedir(), ".local", "share", "opencode-claude-code")
+
+const DEFAULT_CONFIG: LoggerConfig = {
+  file: false,
+  dir: null,
+  mode: "silent",
+  level: "info",
+}
+
+function parseBoolEnv(v: string | undefined): boolean | undefined {
+  if (v == null) return undefined
+  const s = v.toLowerCase().trim()
+  if (s === "") return undefined
+  if (s === "0" || s === "false" || s === "no" || s === "off") return false
+  return true
+}
+
+function parseLevelEnv(v: string | undefined): LogLevel | undefined {
+  if (v == null) return undefined
+  const s = v.toLowerCase().trim()
+  if (s === "") return undefined
+  if (s === "debug" || s === "info" || s === "notice" || s === "warn" || s === "error") {
+    return s
+  }
+  return undefined
+}
+
+function parseModeFromDebugEnv(v: string | undefined): LogMode | undefined {
+  if (v == null || v === "") return undefined
+  return v.includes("opencode-claude-code") ? "debug" : undefined
+}
+
+function withEnvOverrides(base: LoggerConfig): LoggerConfig {
+  const result: LoggerConfig = { ...base }
+  const envFile = parseBoolEnv(process.env.OPENCODE_CLAUDE_CODE_LOG_FILE)
+  if (envFile !== undefined) result.file = envFile
+  const envDir = process.env.OPENCODE_CLAUDE_CODE_LOG_DIR
+  if (envDir !== undefined && envDir !== "") result.dir = envDir
+  const envMode = parseModeFromDebugEnv(process.env.DEBUG)
+  if (envMode !== undefined) result.mode = envMode
+  const envLevel = parseLevelEnv(process.env.OPENCODE_CLAUDE_CODE_LOG_LEVEL)
+  if (envLevel !== undefined) result.level = envLevel
+  return result
+}
+
+let activeConfig: LoggerConfig = withEnvOverrides(DEFAULT_CONFIG)
 let fileLoggingDisabled = false
 
-function rotateIfNeeded(): void {
+/**
+ * Configure the logger from plugin settings. Env vars override the supplied
+ * config when explicitly set, so a developer can flip behavior for a single
+ * process without editing opencode.jsonc.
+ *
+ *   `OPENCODE_CLAUDE_CODE_LOG_FILE`   → `file`   (1/true/on/yes vs 0/false/no/off)
+ *   `OPENCODE_CLAUDE_CODE_LOG_DIR`    → `dir`
+ *   `DEBUG=opencode-claude-code`      → `mode: "debug"`
+ *   `OPENCODE_CLAUDE_CODE_LOG_LEVEL`  → `level` (debug | info | notice | warn | error)
+ */
+export function configureLogger(input: Partial<LoggerConfig>): void {
+  const merged: LoggerConfig = { ...DEFAULT_CONFIG, ...input }
+  activeConfig = withEnvOverrides(merged)
+  fileLoggingDisabled = false
+}
+
+export function getLoggerConfig(): LoggerConfig {
+  return { ...activeConfig }
+}
+
+/** Test-only helper. Resets to defaults+env so tests are deterministic. */
+export function _resetLoggerForTests(): void {
+  activeConfig = withEnvOverrides(DEFAULT_CONFIG)
+  fileLoggingDisabled = false
+}
+
+function resolvedLogFile(): string {
+  return join(activeConfig.dir ?? DEFAULT_DIR, "plugin.log")
+}
+
+function rotateIfNeeded(logFile: string): void {
   try {
-    const stat = statSync(LOG_FILE)
+    const stat = statSync(logFile)
     if (stat.size > MAX_LOG_BYTES) {
-      renameSync(LOG_FILE, `${LOG_FILE}.1`)
+      renameSync(logFile, `${logFile}.1`)
     }
   } catch {
     // file does not exist yet — nothing to rotate
@@ -39,15 +111,15 @@ function rotateIfNeeded(): void {
 }
 
 function writeToFile(line: string): void {
-  if (!LOG_FILE_ENABLED) return
+  if (!activeConfig.file) return
   if (fileLoggingDisabled) return
   try {
-    mkdirSync(dirname(LOG_FILE), { recursive: true })
-    rotateIfNeeded()
-    appendFileSync(LOG_FILE, line + "\n", "utf8")
+    const logFile = resolvedLogFile()
+    mkdirSync(dirname(logFile), { recursive: true })
+    rotateIfNeeded(logFile)
+    appendFileSync(logFile, line + "\n", "utf8")
   } catch {
-    // Disable file logging on first failure to avoid spamming errors when
-    // the FS is read-only (sandbox) or the path is otherwise unwritable.
+    // Disable on first failure to avoid spamming errors on a read-only FS.
     fileLoggingDisabled = true
   }
 }
@@ -61,33 +133,41 @@ function fmt(level: string, msg: string, data?: Record<string, unknown>): string
   return base
 }
 
-function emit(level: string, msg: string, data?: Record<string, unknown>, alwaysStderr = false): void {
-  const line = fmt(level, msg, data)
-  if (alwaysStderr || DEBUG) {
+function shouldEmit(level: LogLevel): boolean {
+  return LEVEL_RANK[level] >= LEVEL_RANK[activeConfig.level]
+}
+
+function shouldTui(level: LogLevel): boolean {
+  // warn/error are alwaysStderr: a developer who passes the level threshold
+  // should still see real problems in the TUI regardless of mode. Below-
+  // threshold entries are filtered earlier by shouldEmit().
+  if (level === "warn" || level === "error") return true
+  return activeConfig.mode === "debug"
+}
+
+function emit(level: LogLevel, msg: string, data?: Record<string, unknown>): void {
+  if (!shouldEmit(level)) return
+  const line = fmt(level.toUpperCase(), msg, data)
+  if (shouldTui(level)) {
     console.error(line)
   }
   writeToFile(line)
 }
 
 export const log = {
+  debug(msg: string, data?: Record<string, unknown>) {
+    emit("debug", msg, data)
+  },
   info(msg: string, data?: Record<string, unknown>) {
-    if (DEBUG) emit("INFO", msg, data)
-    else writeToFile(fmt("INFO", msg, data))
+    emit("info", msg, data)
   },
   notice(msg: string, data?: Record<string, unknown>) {
-    // NOTICE = always-on file log but never console. opencode's TUI surfaces
-    // plugin stderr as a UI warning, so anything we send to console.error
-    // becomes a yellow warning bubble. Reserve that for warn/error.
-    emit("NOTICE", msg, data, false)
+    emit("notice", msg, data)
   },
   warn(msg: string, data?: Record<string, unknown>) {
-    emit("WARN", msg, data, true)
+    emit("warn", msg, data)
   },
   error(msg: string, data?: Record<string, unknown>) {
-    emit("ERROR", msg, data, true)
-  },
-  debug(msg: string, data?: Record<string, unknown>) {
-    if (DEBUG) emit("DEBUG", msg, data)
-    else writeToFile(fmt("DEBUG", msg, data))
+    emit("error", msg, data)
   },
 }

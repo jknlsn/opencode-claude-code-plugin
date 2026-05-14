@@ -12,7 +12,7 @@ import {
   resolveAccounts,
 } from "./accounts.js"
 import { cleanupStaleUnscopedInstall } from "./cleanup-stale.js"
-import { log } from "./logger.js"
+import { configureLogger, log } from "./logger.js"
 import { setOpencodeClient } from "./runtime-status.js"
 
 export interface ClaudeCodeProvider {
@@ -43,6 +43,14 @@ function pickOpencodeDirectory(input: unknown): string | undefined {
 export function createClaudeCode(
   settings: ClaudeCodeProviderSettings = {},
 ): ClaudeCodeProvider {
+  if (settings.logging) {
+    configureLogger({
+      file: settings.logging.file ?? false,
+      dir: settings.logging.dir ?? null,
+      mode: settings.logging.mode ?? "silent",
+      level: settings.logging.level ?? "info",
+    })
+  }
   const cliPath =
     settings.cliPath ?? process.env.CLAUDE_CLI_PATH ?? "claude"
   const providerName = settings.providerID ?? settings.name ?? "claude-code"

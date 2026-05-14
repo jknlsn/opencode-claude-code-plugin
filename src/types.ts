@@ -19,7 +19,40 @@ export interface ClaudeCodeConfig {
   proxyOpencodeMcpTools?: boolean
   multiStepContinuation?: boolean
   autoContinueIncompleteTurns?: boolean | "smart"
+  logging?: LoggingConfig
 }
+
+export interface LoggingConfig {
+  /**
+   * Persist log activity (DEBUG / INFO / NOTICE / WARN / ERROR — those
+   * passing `level`) to a file. Default: `false`. When `false`, entries
+   * below WARN vanish entirely; WARN / ERROR still surface in the TUI via
+   * stderr. Set to `true` to capture the audit trail to disk for review
+   * via `tail` / `grep`.
+   */
+  file?: boolean
+  /**
+   * Optional custom directory for the file log. Defaults to
+   * `~/.local/share/opencode-claude-code/`. Has no effect when `file:false`.
+   */
+  dir?: string
+  /**
+   * TUI policy. `"silent"` (default) routes DEBUG / INFO / NOTICE to file
+   * only; WARN / ERROR still bubble in the TUI as they always do. `"debug"`
+   * additionally echoes every emitted level to stderr (which opencode's TUI
+   * surfaces as warning bubbles).
+   */
+  mode?: LogMode
+  /**
+   * Minimum level to emit anywhere. Anything below the threshold is dropped
+   * before either destination decides what to do. Order:
+   * `debug` < `info` < `notice` < `warn` < `error`. Default: `"info"`.
+   */
+  level?: LogLevel
+}
+
+export type LogLevel = "debug" | "info" | "notice" | "warn" | "error"
+export type LogMode = "silent" | "debug"
 
 export type WebSearchRouting = "claude" | "disabled" | (string & {})
 
@@ -145,6 +178,15 @@ export interface ClaudeCodeProviderSettings {
    * Set to `false` to disable.
    */
   autoContinueIncompleteTurns?: boolean | "smart"
+
+  /**
+   * Logger configuration. See `LoggingConfig` for fields. Env vars
+   * (`OPENCODE_CLAUDE_CODE_LOG_FILE`, `OPENCODE_CLAUDE_CODE_LOG_DIR`,
+   * `OPENCODE_CLAUDE_CODE_LOG_LEVEL`, `DEBUG=opencode-claude-code`) override
+   * these values when explicitly set, so a developer can flip behavior for
+   * one process without editing opencode.jsonc.
+   */
+  logging?: LoggingConfig
 }
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
