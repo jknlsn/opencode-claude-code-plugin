@@ -53,6 +53,14 @@
 - Logger/env behavior: `test-logger.ts`.
 - Spawn-time cwd resolution (`resolveSpawnCwd`, captured-directory fallback): `test-cwd-resolution.ts`.
 
-## Known Follow-ups
+## Roadmap
 
-- (none currently open)
+Best next feature candidates, ranked by value/risk:
+
+1. Per-tool proxy timeouts. Current proxy calls share one hard 10-minute timeout. The `Task` proxy can realistically exceed that. Add config like `proxyToolTimeoutMs: { Task: 1800000, Bash: 600000 }`. High value, clean scope, directly follows @galvani's PR.
+2. Startup diagnostics / doctor log. On plugin init, log one compact status block: plugin version, Claude CLI version, detected cwd fallback mode, enabled `proxyTools`, account count, MCP bridge count, and opencode version if available. Would have saved time during the v0.4.20-v0.4.23 investigation.
+3. Better subagent todo docs + config example. Add a real `multistep` subagent example showing `permission.todowrite: allow`, plus how to navigate `session.child.next`. Useful docs polish, not runtime code.
+4. Workspace-switch cwd tier-two fix. If Jessie reports v0.4.21+ still fails in desktop workspace switching, add a per-request/current-project query instead of relying on `process.cwd()`. Do not build unless issue #4 confirms it is still broken.
+5. Task proxy default-on experiment. Currently opt-in. Consider a warning/notice or config preset first, but do not flip default yet. Needs real-world feedback.
+
+Recommendation: do #1 next. Per-tool proxy timeouts are a real limitation, already identified by the contributor, easy to test, and don't change defaults unless configured.
