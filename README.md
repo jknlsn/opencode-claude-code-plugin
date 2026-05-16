@@ -440,6 +440,7 @@ plugin internals.
 ```bash
 bun install
 bun run typecheck   # tsc --noEmit
+bun run test        # tsx --test (unit suite)
 bun run build       # tsup -> dist/
 ```
 
@@ -449,16 +450,24 @@ Source layout:
 src/
   index.ts                       # opencode plugin entry, config + provider hooks
   models.ts                      # default models + variants
+  accounts.ts                    # multi-account expansion (per-account CLAUDE_CONFIG_DIR + wrapper script)
   claude-code-language-model.ts  # AI-SDK provider that drives `claude`
   message-builder.ts             # AI-SDK prompt → Claude CLI user message
+  tool-mapping.ts                # Claude tool name ↔ opencode tool name mapping; internal-tool skip list
   proxy-mcp.ts                   # in-process MCP server for proxied tools
+  proxy-broker.ts                # pending proxy-call broker between proxy-mcp and opencode tool execution
   mcp-bridge.ts                  # opencode → Claude --mcp-config translator
   session-manager.ts             # LRU cache of CLI subprocesses
   cli-version.ts                 # detect Claude CLI version, gate optional flags
+  runtime-status.ts              # runtime introspection of opencode (MCP status, tool registry)
   logger.ts                      # DEBUG=opencode-claude-code stderr logger
+  tmp.ts                         # per-plugin temp directory helper
+  cleanup-stale.ts               # remove legacy unscoped install from opencode's plugin cache
   types.ts                       # public option types
   opencode-types.ts              # mirrored opencode types
 ```
+
+For runtime gotchas, the v1.15.0 audit waterline, and the release flow, see [`AGENTS.md`](./AGENTS.md).
 
 ## Publishing (maintainers)
 
