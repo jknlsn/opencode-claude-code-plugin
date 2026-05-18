@@ -456,6 +456,24 @@ doesn't accrete a log file on every user's disk by default — opt in when
 you need to inspect auto-continue decisions, broker state, or other
 plugin internals.
 
+## Compatibility with other opencode plugins
+
+### [opencode-dcp](https://github.com/Opencode-DCP/opencode-dynamic-context-pruning) (Dynamic Context Pruning)
+
+Partial support since v0.5.1. DCP runs in a useful degraded mode: automatic strategies and slash commands work, autonomous model-driven compression does not.
+
+| DCP feature | Status | Notes |
+|---|---|---|
+| `experimental.chat.messages.transform` (compression placeholders, dedup, error purge) | ✅ Works | Transforms run inside opencode before reaching this plugin. |
+| `experimental.chat.system.transform` (context-limit nudges, iteration reminders) | ✅ Works | `extractSystemMessages` forwards system-role content to Claude CLI via `--append-system-prompt-file`. |
+| `/dcp compress`, `/dcp sweep`, `/dcp manual`, `/dcp context`, `/dcp stats` slash commands | ✅ Works | Handled by opencode's `command.execute.before` hook, not the model. |
+| Automatic `deduplication` + `purgeErrors` strategies | ✅ Works | Message-transform only, no model tool calls. |
+| Autonomous model-driven `compress` tool calls | ❌ Not supported | DCP registers `compress` as an opencode-native tool. Claude CLI only sees its own built-ins and MCP-bridged servers, so the model never sees `compress`. The plugin prepends a runtime note instructing Claude to ignore any system instruction that asks it to call `compress`/`distill`/`prune`. |
+
+Workaround for autonomous compression: trigger it manually with `/dcp compress` whenever you'd want the model to call it. Full autonomous support would require exposing `compress` as an MCP-bridged tool, which is upstream of this plugin.
+
+---
+
 ## Known limitations
 
 - No streaming of tool inputs as they're being constructed (Anthropic's `input_json_delta`); the plugin emits them once complete.
