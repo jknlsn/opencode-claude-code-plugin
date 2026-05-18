@@ -1310,6 +1310,15 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       usage?: ClaudeStreamMessage["usage"]
     } = {}
     const toolCalls: Array<{ id: string; name: string; args: unknown }> = []
+    // Streaming tool_use entries keyed by content-block index. We accumulate
+    // partial_json chunks here instead of trying to JSON.parse each chunk
+    // independently, and flush to `toolCalls` at content_block_stop. The
+    // previous code indexed `toolCalls` by `msg.index` directly, which is
+    // wrong whenever non-tool blocks (text, thinking) precede a tool_use.
+    const toolCallStreams = new Map<
+      number,
+      { id: string; name: string; inputJson: string }
+    >()
 
     // Set true once we observe a `stream_event` envelope. When on, the
     // top-level `assistant` message is a duplicate of content already
@@ -1323,6 +1332,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         toolCalls: typeof toolCalls
       }
     >((resolve, reject) => {
+      const cleanup = () => {
+        try {
+          if (!proc.killed && proc.exitCode === null) proc.kill()
+        } catch {}
+      }
+
       rl.on("line", (line) => {
         if (!line.trim()) return
         try {
@@ -1392,21 +1407,29 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             }
           }
 
-          if (msg.type === "content_block_start" && msg.content_block) {
+          if (
+            msg.type === "content_block_start" &&
+            msg.content_block &&
+            msg.index !== undefined
+          ) {
             if (
               msg.content_block.type === "tool_use" &&
               msg.content_block.id &&
               msg.content_block.name
             ) {
-              toolCalls.push({
+              toolCallStreams.set(msg.index, {
                 id: msg.content_block.id,
                 name: msg.content_block.name,
-                args: {},
+                inputJson: "",
               })
             }
           }
 
-          if (msg.type === "content_block_delta" && msg.delta) {
+          if (
+            msg.type === "content_block_delta" &&
+            msg.delta &&
+            msg.index !== undefined
+          ) {
             if (msg.delta.type === "text_delta" && msg.delta.text) {
               responseText += msg.delta.text
             }
@@ -1415,17 +1438,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             }
             if (
               msg.delta.type === "input_json_delta" &&
-              msg.delta.partial_json &&
-              msg.index !== undefined
+              msg.delta.partial_json
             ) {
-              const tc = toolCalls[msg.index]
-              if (tc) {
-                try {
-                  tc.args = JSON.parse(msg.delta.partial_json)
-                } catch {
-                  // Partial JSON, accumulate
-                }
+              const tc = toolCallStreams.get(msg.index)
+              if (tc) tc.inputJson += msg.delta.partial_json
+            }
+          }
+
+          if (msg.type === "content_block_stop" && msg.index !== undefined) {
+            const tc = toolCallStreams.get(msg.index)
+            if (tc) {
+              let args: unknown = {}
+              try {
+                args = tc.inputJson ? JSON.parse(tc.inputJson) : {}
+              } catch (err) {
+                log.warn("tool input JSON parse failed", {
+                  name: tc.name,
+                  error: String(err),
+                })
               }
+              toolCalls.push({ id: tc.id, name: tc.name, args })
+              toolCallStreams.delete(msg.index)
             }
           }
 
@@ -1452,6 +1485,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               durationMs: msg.duration_ms,
               usage: msg.usage,
             }
+            cleanup()
             resolve({
               ...resultMeta,
               text: responseText,
@@ -1465,6 +1499,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       })
 
       rl.on("close", () => {
+        cleanup()
         resolve({
           ...resultMeta,
           text: responseText,
@@ -1475,6 +1510,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
       proc.on("error", (err) => {
         log.error("process error", { error: err.message })
+        cleanup()
         reject(err)
       })
 
