@@ -469,11 +469,45 @@ when the task is done, you need clarification on intent, or you hit a real
 blocker. The user can interrupt or abort at any time; turn endings should
 mark meaningful checkpoints, not every completed substep.`
 
+/**
+ * Extract text content from all `system`-role messages in the prompt.
+ * Standard API providers forward these as the `system` parameter; for
+ * Claude CLI, the only equivalent path is --append-system-prompt-file.
+ * Plugins like opencode-dcp inject AGENTS.md and other context via
+ * system-role messages and would otherwise be silently dropped.
+ */
+function extractSystemMessages(
+  prompt: LanguageModelV3CallOptions["prompt"],
+): string[] {
+  const out: string[] = []
+  for (const msg of prompt) {
+    if (msg.role !== "system") continue
+    if (typeof msg.content === "string") {
+      if (msg.content.trim()) out.push(msg.content.trim())
+    } else if (Array.isArray(msg.content)) {
+      for (const part of msg.content as any[]) {
+        if (
+          part?.type === "text" &&
+          typeof part.text === "string" &&
+          part.text.trim()
+        ) {
+          out.push(part.text.trim())
+        }
+      }
+    }
+  }
+  return out
+}
+
 function buildAppendedSystemPrompt(
   cwd: string,
   includeMultiStepHint = true,
+  extraSystemContent: string[] = [],
 ): string | undefined {
   const parts: string[] = []
+  for (const s of extraSystemContent) {
+    if (s.trim()) parts.push(s.trim())
+  }
   const configRoot =
     process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config")
   const globalAgents = readPromptFileIfPresent(join(configRoot, "opencode", "AGENTS.md"))
@@ -1198,6 +1232,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const systemPromptFile = buildAppendedSystemPrompt(
       cwd,
       this.config.multiStepContinuation !== false,
+      extractSystemMessages(options.prompt),
     )
     const cliArgs = buildCliArgs({
       sessionKey: sk,
@@ -1769,6 +1804,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               : buildAppendedSystemPrompt(
                   cwd,
                   self.config.multiStepContinuation !== false,
+                  extractSystemMessages(options.prompt),
                 )
             cliArgs = buildCliArgs({
               sessionKey: sk,
