@@ -187,6 +187,10 @@ function configModelsForProvider(
   for (const [id, model] of Object.entries(defaultModels)) {
     const modelId = modelSuffix ? `${id}@${modelSuffix}` : id
     const existing = providerModels[id] ?? providerModels[modelId]
+    const existingVariants =
+      existing && typeof (existing as { variants?: unknown }).variants === "object"
+        ? ((existing as { variants?: Record<string, Record<string, unknown>> }).variants ?? {})
+        : {}
     const full: OpenCodeModel = {
       ...model,
       id: modelId,
@@ -196,6 +200,10 @@ function configModelsForProvider(
         id: modelId,
         npm: existing?.api?.npm ?? model.api.npm,
         url: existing?.api?.url ?? model.api.url,
+      },
+      variants: {
+        ...(model.variants ?? {}),
+        ...existingVariants,
       },
     }
     models[modelId] = toConfigModel(full)
@@ -347,6 +355,10 @@ const server: OpenCodePlugin = async (input) => {
       config.provider[PROVIDER_ID] = {
         ...existing,
         ...(await providerConfig(existing)),
+        models: configModelsForProvider(
+          (existing?.models ?? {}) as OpenCodeProvider["models"],
+          PROVIDER_ID,
+        ),
       }
       log.notice("registered claude-code provider", {
         id: PROVIDER_ID,
