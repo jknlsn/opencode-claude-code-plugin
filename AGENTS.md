@@ -21,6 +21,7 @@
 ## Release Workflow
 
 - Never run `npm publish` manually. Tag push triggers `.github/workflows/publish.yml`, which publishes to npm.
+- Publishing uses npm **trusted publishing (OIDC)**, not a token (since v0.6.2). The `publish` job has `id-token: write`, upgrades npm (`npm install -g npm@latest`; OIDC needs npm >= 11.5.1), and runs `npm publish --access public` with **no `NODE_AUTH_TOKEN`**. The trusted publisher is configured on npmjs.com and must match repo `khalilgharbaoui/opencode-claude-code-plugin` + workflow filename `publish.yml`. The legacy `NPM_TOKEN` secret is unused (it expired ~2026-05-25, which silently failed the 0.6.0/0.6.1 publishes with `npm error 404` on PUT until the OIDC switch). If a publish fails on auth, check the trusted-publisher config, not a token.
 - Release flow: commit code/docs, then `npm version patch` (or minor/major), then `git push origin master --follow-tags`.
 - `npm version` creates the version commit and annotated `v*` tag. Prior release commit/tag messages are `v0.x.y`; keep that style.
 - After pushing a release tag, confirm the publish workflow with `gh run list --repo khalilgharbaoui/opencode-claude-code-plugin --limit 3`.
