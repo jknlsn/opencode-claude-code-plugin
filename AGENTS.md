@@ -25,6 +25,7 @@
 - Release flow: commit code/docs, then `npm version patch` (or minor/major), then `git push origin master --follow-tags`.
 - `npm version` creates the version commit and annotated `v*` tag. Prior release commit/tag messages are `v0.x.y`; keep that style.
 - After pushing a release tag, confirm the publish workflow with `gh run list --repo khalilgharbaoui/opencode-claude-code-plugin --limit 3`.
+- A freshly published version will NOT appear in a local opencode until its frozen plugin cache is cleared. opencode resolves the `@latest` spec once and freezes the concrete version into `~/.cache/opencode/packages/@khalilgharbaoui/opencode-claude-code-plugin@latest/` (its `package.json` + `package-lock.json`); a plain restart never re-resolves the tag. To pick up a new release: `rm -rf ~/.cache/opencode/packages/@khalilgharbaoui/opencode-claude-code-plugin@latest` then fully relaunch opencode. Confirmed 2026-05-29: the cache was frozen at 0.5.1, which is why 0.6.2 (Opus 4.8) did not show in the model picker after a restart until the dir was removed.
 - Do not add a Claude co-author trailer to commits.
 - Keep `README.md` updated when adding public options, env vars, required CLI versions, or behavior users can observe.
 
