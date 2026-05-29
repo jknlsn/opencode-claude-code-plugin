@@ -160,4 +160,14 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     cost: opusCost,
     releaseDate: "2025-07-16",
   }),
+  "claude-opus-4-8": defineModel({
+    id: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
+    family: "opus",
+    reasoning: true,
+    context: 1_000_000,
+    output: 16_384,
+    cost: opusCost,
+    releaseDate: "2026-05-29",
+  }),
 }

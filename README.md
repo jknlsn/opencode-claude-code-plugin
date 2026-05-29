@@ -23,7 +23,7 @@ claude --version
 
 That's it. Restart opencode, pick a `claude-code` model, done.
 
-The plugin self-registers the `claude-code` provider, all current Claude Code models (Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7) with reasoning variants (`low` / `medium` / `high` / `xhigh` / `max`), and sensible defaults for tool proxying. You don't need to write a `provider` block at all unless you want to override something.
+The plugin self-registers the `claude-code` provider, all current Claude Code models (Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8) with reasoning variants (`low` / `medium` / `high` / `xhigh` / `max`), and sensible defaults for tool proxying. You don't need to write a `provider` block at all unless you want to override something.
 
 ---
 
@@ -74,6 +74,7 @@ The plugin auto-registers the following. They appear in the model picker without
 | `claude-opus-4-5` | Claude Code Opus 4.5 | 1M | 16,384 | low/medium/high/xhigh/max |
 | `claude-opus-4-6` | Claude Code Opus 4.6 | 1M | 16,384 | low/medium/high/xhigh/max |
 | `claude-opus-4-7` | Claude Code Opus 4.7 | 1M | 16,384 | low/medium/high/xhigh/max |
+| `claude-opus-4-8` | Claude Code Opus 4.8 | 1M | 16,384 | low/medium/high/xhigh/max |
 
 Capabilities for every model: text + image input, text output, tool use, attachments. No temperature control, no PDF/audio/video, no interleaved streaming.
 
