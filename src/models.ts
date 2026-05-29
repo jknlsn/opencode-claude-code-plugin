@@ -168,6 +168,6 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: opusCost,
-    releaseDate: "2026-05-29",
+    releaseDate: "2026-05-28",
   }),
 }
