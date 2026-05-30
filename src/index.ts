@@ -109,31 +109,6 @@ function cleanProviderOptions(
   return result
 }
 
-function mergeDefaultVariants(models: Record<string, unknown> = {}) {
-  const result = { ...models } as Record<string, Record<string, unknown>>
-
-  for (const [id, model] of Object.entries(defaultModels)) {
-    if (!model.variants) continue
-
-    const existing =
-      result[id] && typeof result[id] === "object" ? result[id] : {}
-    const variants =
-      existing.variants && typeof existing.variants === "object"
-        ? (existing.variants as Record<string, Record<string, unknown>>)
-        : {}
-
-    result[id] = {
-      ...existing,
-      variants: {
-        ...model.variants,
-        ...variants,
-      },
-    }
-  }
-
-  return result
-}
-
 function defaultModelsForProvider(
   providerModels: OpenCodeProvider["models"],
   providerID = PROVIDER_ID,
@@ -177,7 +152,7 @@ function defaultModelsForProvider(
  * `temperature`, `reasoning`, `cost.cache_read`, `modalities`, etc.)
  * so the config-path provider loader parses them correctly.
  */
-function configModelsForProvider(
+export function configModelsForProvider(
   providerModels: OpenCodeProvider["models"],
   providerID: string,
   modelSuffix?: string,
@@ -251,7 +226,9 @@ async function providerConfig(
       ...mergedOptions,
       ...runtime,
     },
-    models: mergeDefaultVariants(existing?.models),
+    // models is intentionally omitted: both callers overwrite it with
+    // configModelsForProvider(), which emits the flat config schema
+    // opencode's config-path loader parses (and merges user variants).
   }
 }
 
