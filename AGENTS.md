@@ -43,6 +43,7 @@
 - Subagent todos require `permission: { todowrite: "allow" }` on the subagent definition. opencode's `task.ts:197` injects `todowrite: false` into the tools dict for subagents that don't have the rule, so the ledger's synthetic todowrites surface as `⚙ invalid` in the subagent's stream. Built-in `general` denies todowrite by default (`agent.ts:171`); custom subagents must grant it explicitly. When permission is granted, the data flow is fully verifiable in `~/.local/share/opencode/opencode.db`: rows land in the `todo` table and parts with `tool="todowrite"` appear in the `part` table for the subagent's session id. Todos then render inline in the subagent's session view (navigate via `session.child.next`), not the parent's. Empirically confirmed 2026-05-16 via subagent `ses_1d16d3bb4ffeOI5QUWZzBKDsSL`.
 - Verified compatible with opencode v1.15.0 (audit 2026-05-16). `ProviderV2` hook gained an optional `ctx` arg we ignore; `McpStatus` expanded to 5 variants but `enabled: status === "connected"` in `mcp-bridge.ts` still collapses non-connected to `false` correctly. opencode's `tools` argument to `doStream` is intentionally unused — Claude CLI only sees its own built-ins plus MCP servers bridged via `--mcp-config`, so opencode-native tools like `task_status` never reach the model and need no `mapTool` entry. Re-audit at the next opencode minor bump.
 - `cwd` resolution at spawn must stay lazy. `opencodeProjectDirectory` captured from `PluginInput.directory` lives in `runtime-status.ts` and is consumed via `resolveSpawnCwd()` at spawn time only as a fallback when `process.cwd()` is unusable (`/`). Do NOT bake the captured value into `mergedOptions.cwd` during provider registration in `index.ts` — that freezes it at plugin init and breaks workspace switching mid-session. The v0.2.4 fix did exactly this and it shipped as the v0.4.21 regression report on issue #4. Tests live in `test-cwd-resolution.ts`.
+- `AskUserQuestion` is auto-denied in `controlRequestBehaviorForTool` (so the headless CLI can't self-answer an empty TTY) and rendered to the operator as markdown via `formatAskUserQuestion`. The deny message (`denyMessageForTool` / `ASK_USER_QUESTION_DENY_MESSAGE` in `claude-code-language-model.ts`) must tell the model to **stop and wait unconditionally** — end the turn, no more tools, no self-answer. Before v0.7.0 it offered an "if non-interactive, proceed with a reasonable guess" escape hatch; the model could not tell interactive opencode from a headless run and routinely took it, so questions appeared skipped (issue #8). Do not re-add a proceed-anyway clause to that message. Behavior is verified via `denyMessageForTool` in `test-ask-user-question.ts`; the full stop-the-turn flow needs a live opencode session where the model calls AskUserQuestion.
 
 ## Tests To Touch When Editing
 
@@ -54,6 +55,8 @@
 - Auto-continue / incomplete turn handling: `test-auto-continue.ts`, `test-has-new-user-content.ts`.
 - Logger/env behavior: `test-logger.ts`.
 - Spawn-time cwd resolution (`resolveSpawnCwd`, captured-directory fallback): `test-cwd-resolution.ts`.
+- AskUserQuestion deny/stop behavior (`denyMessageForTool`, `isAskUserQuestionTool`): `test-ask-user-question.ts`.
+- Config-path model metadata injection (`configModelsForProvider`): `test-config-models.ts`.
 
 ## Roadmap
 

@@ -243,10 +243,42 @@ function normalizeVisibleText(text: string): string {
 }
 
 /** Tool names that mean "ask the human a question" (CLI casing variants). */
-function isAskUserQuestionTool(name: string | undefined): boolean {
+export function isAskUserQuestionTool(name: string | undefined): boolean {
   if (!name) return false
   const n = name.toLowerCase()
   return n === "askuserquestion" || n === "ask_user_question"
+}
+
+/**
+ * Deny message returned to the model when it invokes AskUserQuestion.
+ *
+ * AskUserQuestion is denied (see controlRequestBehaviorForTool) so the
+ * headless CLI cannot self-answer against an empty TTY. The question is
+ * already rendered to the operator by formatAskUserQuestion, so this text
+ * tells the model to stop and wait — unconditionally. Earlier versions
+ * offered an "if this is non-interactive, proceed with a reasonable guess"
+ * escape hatch, but the model could not reliably tell interactive opencode
+ * from a headless run and routinely took it, so questions appeared to be
+ * skipped (issue #8). Stopping is the correct default for opencode; a
+ * headless run simply ends the turn with the question as its final output.
+ */
+const ASK_USER_QUESTION_DENY_MESSAGE =
+  "Your question and its options have already been presented to the" +
+  " operator verbatim. Stop now: end your turn without calling any more" +
+  " tools and without answering the question yourself. Wait for the" +
+  " operator's reply, which arrives as the next user message. Do not" +
+  " guess, assume, or proceed on their behalf."
+
+/** Build the deny message for an auto-denied control request. */
+export function denyMessageForTool(
+  toolName: string | undefined,
+  configuredDenyMessage?: string,
+): string {
+  if (isAskUserQuestionTool(toolName)) return ASK_USER_QUESTION_DENY_MESSAGE
+  return (
+    configuredDenyMessage ??
+    `Denied by opencode-claude-code policy for tool ${toolName}`
+  )
 }
 
 /**
@@ -894,16 +926,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
           toolName,
         })
       } else {
-        const denyMessage = isAskUserQuestionTool(toolName)
-          ? "Your question and its options have already been presented to" +
-            " the operator in full. Prefer to stop here and wait for their" +
-            " answer in the next message — do not silently guess. But if" +
-            " this is an automated or otherwise non-interactive run where" +
-            " no operator will reply, do not stall: proceed with the single" +
-            " most reasonable option and state, in one line, the assumption" +
-            " you made so it can be corrected later."
-          : this.config.controlRequestDenyMessage ??
-            `Denied by opencode-claude-code policy for tool ${toolName}`
+        const denyMessage = denyMessageForTool(
+          toolName,
+          this.config.controlRequestDenyMessage,
+        )
         this.writeControlResponse(proc, requestId, {
           behavior: "deny",
           message: denyMessage,
