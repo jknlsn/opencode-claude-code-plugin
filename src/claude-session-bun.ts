@@ -80,6 +80,16 @@ export interface ClaudeSessionOptions {
   /** false = plain write(prompt)+Enter; true = wrap in bracketed-paste so
    *  multi-line prompts don't submit early. Default true. */
   bracketedPaste?: boolean
+  /** Submitting a turn: a large/multi-line bracketed paste collapses into a
+   *  "[Pasted text]" placeholder, and an Enter sent while claude is still
+   *  ingesting the paste is silently DROPPED — so a single fixed-delay Enter is
+   *  unreliable and the turn can hang until turnTimeoutMs. Instead: wait
+   *  submitMinMs, send Enter, then confirm the turn was accepted (a new
+   *  transcript record appears) within submitConfirmMs; if not, resend Enter,
+   *  up to submitMaxRetries times. */
+  submitMinMs?: number
+  submitConfirmMs?: number
+  submitMaxRetries?: number
   /** Abort the call (during boot or an in-flight turn): kills the process and
    *  rejects with an "aborted" error. */
   signal?: AbortSignal
@@ -130,6 +140,9 @@ export class ClaudeSession {
       pollMs: opts.pollMs ?? 250,
       turnTimeoutMs: opts.turnTimeoutMs ?? 120000,
       bracketedPaste: opts.bracketedPaste ?? true,
+      submitMinMs: opts.submitMinMs ?? 200,
+      submitConfirmMs: opts.submitConfirmMs ?? 1500,
+      submitMaxRetries: opts.submitMaxRetries ?? 8,
       debug: opts.debug ?? false,
     }
   }
@@ -193,6 +206,29 @@ export class ClaudeSession {
     }
   }
 
+  /** Submit the freshly-injected prompt and confirm the turn was actually
+   *  accepted. A large bracketed paste collapses into a "[Pasted text]"
+   *  placeholder; an Enter sent while claude is still ingesting the paste is
+   *  silently dropped, so a single fixed-delay Enter races the paste and can
+   *  leave the prompt sitting unsubmitted (→ hang until turnTimeoutMs). Send
+   *  Enter, then poll for transcript growth past the cursor (the turn's records
+   *  are written on acceptance); resend Enter until accepted or the retry
+   *  budget is spent. Polling growth (not a blind delay) also stops us from
+   *  sending a stray Enter once the turn is in flight. */
+  private async submitTurn(): Promise<void> {
+    await delay(this.o.submitMinMs)
+    for (let attempt = 0; attempt < this.o.submitMaxRetries; attempt++) {
+      if (this.aborted || this.exited || !this.proc) return
+      this.proc.terminal.write("\r")
+      const until = Date.now() + this.o.submitConfirmMs
+      while (Date.now() < until) {
+        await delay(80)
+        if (this.aborted || this.exited) return
+        if (this.lineCount() > this.cursor) return // turn accepted
+      }
+    }
+  }
+
   private readRawLines(): string[] {
     try {
       return fs.readFileSync(this.jsonlPath, "utf8").split("\n")
@@ -218,14 +254,15 @@ export class ClaudeSession {
     const timeout = perTurnTimeoutMs ?? this.o.turnTimeoutMs
     const t0 = Date.now()
 
-    // Inject. Bracketed paste keeps multi-line prompts from submitting early.
+    // Inject. Bracketed paste keeps multi-line prompts from submitting early;
+    // submitTurn() then presses Enter and confirms the turn was accepted,
+    // resending Enter if the (collapsed) paste swallowed the first one.
     if (this.o.bracketedPaste) {
       this.proc.terminal.write("\x1b[200~" + prompt + "\x1b[201~")
     } else {
       this.proc.terminal.write(prompt)
     }
-    await delay(200)
-    this.proc.terminal.write("\r")
+    await this.submitTurn()
 
     const collected: string[] = []
     let lastUsage: any = null
@@ -314,8 +351,7 @@ export class ClaudeSession {
     } else {
       this.proc.terminal.write(prompt)
     }
-    await delay(200)
-    this.proc.terminal.write('\r')
+    await this.submitTurn()
 
     let lastUsage: any = null
     let totalOutput = 0
