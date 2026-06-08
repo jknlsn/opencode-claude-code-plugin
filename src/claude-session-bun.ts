@@ -314,6 +314,7 @@ export class ClaudeSession {
     this.proc.terminal.write('\r')
 
     let lastUsage: any = null
+    let totalOutput = 0
     let stopReason: string | null = null
     const deadline = Date.now() + timeout
 
@@ -335,7 +336,10 @@ export class ClaudeSession {
           continue
         }
         if (rec.type === 'assistant' && rec.message) {
-          if (rec.message.usage) lastUsage = rec.message.usage
+          if (rec.message.usage) {
+            lastUsage = rec.message.usage
+            totalOutput += rec.message.usage.output_tokens ?? 0
+          }
           if (
             rec.message.stop_reason &&
             TERMINAL_STOP.has(rec.message.stop_reason)
@@ -348,7 +352,23 @@ export class ClaudeSession {
       if (stopReason) break
     }
 
-    return { stopReason, usage: lastUsage }
+    // Context (input/cache) = the LAST record's full conversation state; output
+    // = SUM across all assistant records this turn (each generation), else
+    // multi-record tool turns undercount output. toUsage() prefers
+    // iterations[last], so patch that entry's output too.
+    let usage: any = lastUsage
+    if (lastUsage) {
+      usage = { ...lastUsage, output_tokens: totalOutput }
+      if (Array.isArray(lastUsage.iterations) && lastUsage.iterations.length > 0) {
+        const iters = lastUsage.iterations.map((it: any) => ({ ...it }))
+        iters[iters.length - 1] = {
+          ...iters[iters.length - 1],
+          output_tokens: totalOutput,
+        }
+        usage.iterations = iters
+      }
+    }
+    return { stopReason, usage }
   }
 
   dispose(): void {
