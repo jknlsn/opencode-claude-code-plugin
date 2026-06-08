@@ -235,10 +235,14 @@ export class ClaudeSession {
     while (Date.now() < deadline) {
       await delay(this.o.pollMs)
       if (this.aborted) throw new Error("aborted mid-turn")
-      if (this.exited) throw new Error("claude exited mid-turn")
       const lines = this.readRawLines()
       const lastComplete = lines.length - 1 // exclusive bound; trailing/partial line skipped
-      if (lastComplete <= this.cursor) continue
+      if (lastComplete <= this.cursor) {
+        // Drain the transcript before reacting to exit: a final assistant record
+        // can be flushed in the same tick the process exits.
+        if (this.exited) throw new Error("claude exited mid-turn")
+        continue
+      }
 
       for (let i = this.cursor; i < lastComplete; i++) {
         const s = lines[i]
@@ -321,10 +325,14 @@ export class ClaudeSession {
     while (Date.now() < deadline) {
       await delay(this.o.pollMs)
       if (this.aborted) throw new Error('aborted mid-turn')
-      if (this.exited) break
       const lines = this.readRawLines()
       const lastComplete = lines.length - 1
-      if (lastComplete <= this.cursor) continue
+      if (lastComplete <= this.cursor) {
+        // Drain the transcript before reacting to exit: the terminal assistant
+        // record can land in the same tick the process exits.
+        if (this.exited) break
+        continue
+      }
       for (let i = this.cursor; i < lastComplete; i++) {
         const s = lines[i]
         if (!s || !s.trim()) continue
