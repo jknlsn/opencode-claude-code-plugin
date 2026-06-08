@@ -1662,12 +1662,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       !["", "0", "false", "no", "off"].includes(v.trim().toLowerCase())
     // Interactive (subscription) transport: drive the claude TUI over Bun's
     // native ConPTY + JSONL tail instead of headless `--print` stream-json.
-    // Self-healing: if Bun.Terminal is unavailable (e.g. not under Bun), fall
-    // back to the headless path. Default OFF -> existing behavior unchanged.
+    // Prefer the provider option (config-driven, reliable in the GUI app where
+    // process env vars are not inherited); fall back to the env var. Self-healing:
+    // if Bun.Terminal is unavailable (e.g. not under Bun), use the headless path.
+    const interactivePref =
+      this.config.interactive ??
+      flagOn(process.env.CLAUDE_CODE_INTERACTIVE_TRANSPORT)
     const useInteractive =
-      flagOn(process.env.CLAUDE_CODE_INTERACTIVE_TRANSPORT) &&
-      typeof (globalThis as any).Bun?.Terminal === "function"
-    const interactiveBypass = flagOn(process.env.CLAUDE_CODE_INTERACTIVE_BYPASS)
+      interactivePref && typeof (globalThis as any).Bun?.Terminal === "function"
+    const interactiveBypass =
+      this.config.interactiveBypass ??
+      flagOn(process.env.CLAUDE_CODE_INTERACTIVE_BYPASS)
 
     if (scope === "no-tools" && !compactionMode) {
       log.info("doStream no-tools title stub", {
