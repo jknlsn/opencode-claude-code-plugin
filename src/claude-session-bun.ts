@@ -288,6 +288,69 @@ export class ClaudeSession {
     }
   }
 
+  /**
+   * Like ask(), but instead of collecting the reply text it re-emits each NEW
+   * raw JSONL transcript line via onLine (verbatim) until a terminal
+   * stop_reason. Returns the terminal stop_reason + the last assistant usage.
+   * Used by the opencode plugin transport shim, which feeds these raw lines
+   * into the existing stream-json line handler unchanged.
+   */
+  async tailTurn(
+    prompt: string,
+    onLine: (rawLine: string) => void,
+    perTurnTimeoutMs?: number
+  ): Promise<{ stopReason: string | null; usage: any | null }> {
+    if (this.aborted) throw new Error('aborted')
+    if (!this.proc || this.exited)
+      throw new Error('session not started or already exited')
+    const timeout = perTurnTimeoutMs ?? this.o.turnTimeoutMs
+
+    if (this.o.bracketedPaste) {
+      this.proc.terminal.write('\x1b[200~' + prompt + '\x1b[201~')
+    } else {
+      this.proc.terminal.write(prompt)
+    }
+    await delay(200)
+    this.proc.terminal.write('\r')
+
+    let lastUsage: any = null
+    let stopReason: string | null = null
+    const deadline = Date.now() + timeout
+
+    while (Date.now() < deadline) {
+      await delay(this.o.pollMs)
+      if (this.aborted) throw new Error('aborted mid-turn')
+      if (this.exited) break
+      const lines = this.readRawLines()
+      const lastComplete = lines.length - 1
+      if (lastComplete <= this.cursor) continue
+      for (let i = this.cursor; i < lastComplete; i++) {
+        const s = lines[i]
+        if (!s || !s.trim()) continue
+        onLine(s)
+        let rec: any
+        try {
+          rec = JSON.parse(s)
+        } catch {
+          continue
+        }
+        if (rec.type === 'assistant' && rec.message) {
+          if (rec.message.usage) lastUsage = rec.message.usage
+          if (
+            rec.message.stop_reason &&
+            TERMINAL_STOP.has(rec.message.stop_reason)
+          ) {
+            stopReason = rec.message.stop_reason
+          }
+        }
+      }
+      this.cursor = lastComplete
+      if (stopReason) break
+    }
+
+    return { stopReason, usage: lastUsage }
+  }
+
   dispose(): void {
     if (this.proc) {
       try {

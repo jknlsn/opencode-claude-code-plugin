@@ -25,6 +25,7 @@ import {
 } from "./runtime-status.js"
 import {
   getActiveProcess,
+  setActiveProcess,
   spawnClaudeProcess,
   buildCliArgs,
   setClaudeSessionId,
@@ -35,6 +36,7 @@ import {
   isClaudeThinkingDisabled,
   sessionKey,
 } from "./session-manager.js"
+import { spawnInteractiveProcess } from "./claude-session-wrapper.js"
 import { log } from "./logger.js"
 import { detectCliVersion } from "./cli-version.js"
 import {
@@ -1655,6 +1657,17 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const toUsage = this.toUsage.bind(this)
     const toFinishReason = this.toFinishReason.bind(this)
     const handleControlRequest = this.handleControlRequest.bind(this)
+    const flagOn = (v: string | undefined) =>
+      v !== undefined &&
+      !["", "0", "false", "no", "off"].includes(v.trim().toLowerCase())
+    // Interactive (subscription) transport: drive the claude TUI over Bun's
+    // native ConPTY + JSONL tail instead of headless `--print` stream-json.
+    // Self-healing: if Bun.Terminal is unavailable (e.g. not under Bun), fall
+    // back to the headless path. Default OFF -> existing behavior unchanged.
+    const useInteractive =
+      flagOn(process.env.CLAUDE_CODE_INTERACTIVE_TRANSPORT) &&
+      typeof (globalThis as any).Bun?.Terminal === "function"
+    const interactiveBypass = flagOn(process.env.CLAUDE_CODE_INTERACTIVE_BYPASS)
 
     if (scope === "no-tools" && !compactionMode) {
       log.info("doStream no-tools title stub", {
@@ -1827,6 +1840,43 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         }
 
         const setup = async () => {
+          if (useInteractive && !compactionMode) {
+            // Interactive Bun-ConPTY transport. Reuse the live session if one
+            // exists for this key; else spawn a new interactive claude. The
+            // wrapper conforms to ActiveProcess, so reuse/eviction/hot-reload
+            // and the whole emission body below work unchanged.
+            const mcp = self.effectiveMcpConfig(cwd, undefined, runtimeStatus!)
+            if (activeProcess) {
+              proc = activeProcess.proc
+              lineEmitter = activeProcess.lineEmitter
+              log.debug("reusing active interactive session", { sk })
+            } else {
+              const allow = [
+                ...mcp.allEnabledServerNames.map((n) => `mcp__${n}__*`),
+                "mcp__opencode_proxy__*",
+                "Bash",
+                "Edit",
+                "Write",
+                "Read",
+                "WebFetch",
+              ]
+              const ap = spawnInteractiveProcess({
+                cwd,
+                model: effectiveModelId,
+                mcpConfigPaths: mcp.paths,
+                permissionsAllow: allow,
+                permissionMode: interactiveBypass
+                  ? "bypassPermissions"
+                  : undefined,
+              })
+              ap.mcpHash = mcp.bridgedHash
+              setActiveProcess(sk, ap)
+              proc = ap.proc
+              lineEmitter = ap.lineEmitter
+              activeProcess = ap
+              log.info("spawned interactive claude session", { sk })
+            }
+          } else {
           let cliArgs: string[]
           let spawnSystemPromptFile: string | undefined
           let spawnProxyServer: ProxyMcpServer | null = null
@@ -1929,6 +1979,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             proc = ap.proc
             lineEmitter = ap.lineEmitter
             activeProcess = ap
+          }
           }
 
           controller.enqueue({ type: "stream-start", warnings })
@@ -2510,11 +2561,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     string,
                     unknown
                   >
-                  toolCallsById.set(block.id, {
-                    id: block.id,
-                    name: block.name,
-                    input: parsedInput,
-                  })
 
                   if (isAskUserQuestionTool(block.name)) {
                     const askId = startTextBlock()
@@ -2552,6 +2598,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     })
 
                     if (!skip) {
+                      toolCallsById.set(block.id, {
+                        id: block.id,
+                        name: block.name,
+                        input: parsedInput,
+                      })
                       if (!executed) skipResultForIds.add(block.id)
                       controller.enqueue({
                         type: "tool-input-start",
