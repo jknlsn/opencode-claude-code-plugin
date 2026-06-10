@@ -103,13 +103,17 @@ This plugin drives Claude Code headlessly (`claude --print`), which Anthropic bi
 | Pro | $20 |
 | Max 5x | $100 |
 | Max 20x | $200 |
-| Team Standard | $20/seat |
-| Team Premium | $100/seat |
-| Enterprise (Standard seats) | none |
+| Team (Standard seats) | $20 |
+| Team (Premium seats) | $100 |
+| Enterprise (usage-based) | $20 |
+| Enterprise (seat-based Premium seats) | $200 |
+
+Credits are **per user, not pooled** across a team, and Standard seats on seat-based Enterprise plans aren't eligible. See Anthropic's [Agent SDK credit article](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) for the authoritative table.
 
 What this means for plugin users:
 
-- **Claim the credit once.** It's a one-time opt-in via your Claude account (claim emails started going out June 8, 2026); after that it refreshes every billing cycle. Unused credit does not roll over.
+- **Claim the credit once.** It's a one-time opt-in via your Claude account; eligible users get an email with claim instructions before June 15, 2026. After that it refreshes every billing cycle, and unused credit does not roll over.
+- **Agent SDK usage drains the credit first**, before any other source.
 - **When the credit runs out, plugin requests stop** until the next billing cycle — unless you enable usage credits in your Claude account, in which case overflow is billed at standard API rates.
 - **The credit is denominated in dollars at standard API rates**, so the Price × column above maps directly to how fast each model drains it — Fable 5 / Mythos 5 burn it 10× faster than Haiku, 2× faster than Opus 4.8.
 - **API-key auth is unaffected.** If your `claude` CLI authenticates with an Anthropic API key / Console billing instead of a subscription, nothing changes — pay-as-you-go as before.
