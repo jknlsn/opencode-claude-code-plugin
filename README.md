@@ -269,10 +269,6 @@ Set `interactiveSystemPrompt: false` only for diagnostics. While disabled, the i
 - **Turn timeout:** a turn that produces no terminal stop within 30 minutes is reported honestly as an error result (visible truncation), not silently ended.
 - `/compact` always uses the headless transport regardless of this setting.
 
-### Known issue
-
-- **Fresh sessions can hang at startup.** With `interactive: true`, starting a brand-new opencode session (under Bun) can leave the TUI blank and unresponsive before you can type. Resuming an existing session (`opencode --continue`) works, and once a session is running the transport is stable. Until this is fixed, leave `interactive` unset (headless default) if you hit it. Tracked for a follow-up release.
-
 ---
 
 ## Selective tool proxy
