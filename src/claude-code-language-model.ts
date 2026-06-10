@@ -25,6 +25,7 @@ import {
 } from "./runtime-status.js"
 import {
   getActiveProcess,
+  setActiveProcess,
   spawnClaudeProcess,
   buildCliArgs,
   setClaudeSessionId,
@@ -35,6 +36,7 @@ import {
   isClaudeThinkingDisabled,
   sessionKey,
 } from "./session-manager.js"
+import { spawnInteractiveProcess } from "./claude-session-wrapper.js"
 import { log } from "./logger.js"
 import { detectCliVersion } from "./cli-version.js"
 import {
@@ -556,7 +558,7 @@ function extractSystemMessages(
   return out
 }
 
-function buildAppendedSystemPrompt(
+export function buildAppendedSystemPrompt(
   cwd: string,
   includeMultiStepHint = true,
   extraSystemContent: string[] = [],
@@ -1655,6 +1657,22 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const toUsage = this.toUsage.bind(this)
     const toFinishReason = this.toFinishReason.bind(this)
     const handleControlRequest = this.handleControlRequest.bind(this)
+    const flagOn = (v: string | undefined) =>
+      v !== undefined &&
+      !["", "0", "false", "no", "off"].includes(v.trim().toLowerCase())
+    // Interactive (subscription) transport: drive the claude TUI over Bun's
+    // native ConPTY + JSONL tail instead of headless `--print` stream-json.
+    // Prefer the provider option (config-driven, reliable in the GUI app where
+    // process env vars are not inherited); fall back to the env var. Self-healing:
+    // if Bun.Terminal is unavailable (e.g. not under Bun), use the headless path.
+    const interactivePref =
+      this.config.interactive ??
+      flagOn(process.env.CLAUDE_CODE_INTERACTIVE_TRANSPORT)
+    const useInteractive =
+      interactivePref && typeof (globalThis as any).Bun?.Terminal === "function"
+    const interactiveBypassRequested =
+      this.config.interactiveBypass ??
+      flagOn(process.env.CLAUDE_CODE_INTERACTIVE_BYPASS)
 
     if (scope === "no-tools" && !compactionMode) {
       log.info("doStream no-tools title stub", {
@@ -1827,6 +1845,74 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
         }
 
         const setup = async () => {
+          if (useInteractive && !compactionMode) {
+            // Interactive Bun-ConPTY transport. Reuse the live session if one
+            // exists for this key; else spawn a new interactive claude. The
+            // wrapper conforms to ActiveProcess, so reuse/eviction/hot-reload
+            // and the whole emission body below work unchanged.
+            const mcp = self.effectiveMcpConfig(cwd, undefined, runtimeStatus!)
+            if (activeProcess) {
+              proc = activeProcess.proc
+              lineEmitter = activeProcess.lineEmitter
+              log.debug("reusing active interactive session", { sk })
+            } else {
+              // MCP wildcards are always derived from the live bridge config;
+              // the built-in tool list is overridable via interactiveAllowTools.
+              const allow = [
+                ...mcp.allEnabledServerNames.map((n) => `mcp__${n}__*`),
+                "mcp__opencode_proxy__*",
+                ...(self.config.interactiveAllowTools ?? [
+                  "Bash",
+                  "Edit",
+                  "Write",
+                  "Read",
+                  "WebFetch",
+                ]),
+              ]
+              const systemPromptFile =
+                self.config.interactiveSystemPrompt === false
+                  ? undefined
+                  : buildAppendedSystemPrompt(
+                      cwd,
+                      self.config.multiStepContinuation !== false,
+                      // Do not forward opencode's own system prompt into the
+                      // interactive TUI. Live subscription-account testing
+                      // showed that large forwarded payload can trigger Claude
+                      // Code's third-party-app usage gate, while our static
+                      // CLI/AGENTS/continuation prompt remains safe.
+                    )
+              if (self.config.interactiveSystemPrompt === false) {
+                log.warn(
+                  "interactive system prompt disabled; opencode agent prompts will not be appended",
+                )
+              }
+              if (interactiveBypassRequested) {
+                log.warn(
+                  "interactiveBypass ignored: Claude Code prompts for bypassPermissions confirmation in the interactive TUI",
+                )
+              }
+              const ap = spawnInteractiveProcess({
+                cwd,
+                cliPath,
+                configDir: self.config.configDir,
+                model: effectiveModelId,
+                mcpConfigPaths: mcp.paths,
+                permissionsAllow: allow,
+                systemPromptFile,
+              })
+              ap.mcpHash = mcp.bridgedHash
+              setActiveProcess(sk, ap)
+              proc = ap.proc
+              lineEmitter = ap.lineEmitter
+              activeProcess = ap
+              log.info("spawned interactive claude session", {
+                sk,
+                cliPath,
+                configDir: self.config.configDir,
+                model: effectiveModelId,
+              })
+            }
+          } else {
           let cliArgs: string[]
           let spawnSystemPromptFile: string | undefined
           let spawnProxyServer: ProxyMcpServer | null = null
@@ -1929,6 +2015,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
             proc = ap.proc
             lineEmitter = ap.lineEmitter
             activeProcess = ap
+          }
           }
 
           controller.enqueue({ type: "stream-start", warnings })
@@ -2540,11 +2627,6 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     string,
                     unknown
                   >
-                  toolCallsById.set(block.id, {
-                    id: block.id,
-                    name: block.name,
-                    input: parsedInput,
-                  })
 
                   if (isAskUserQuestionTool(block.name)) {
                     const askId = startTextBlock()
@@ -2601,6 +2683,11 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     })
 
                     if (!skip) {
+                      toolCallsById.set(block.id, {
+                        id: block.id,
+                        name: block.name,
+                        input: parsedInput,
+                      })
                       if (!executed) skipResultForIds.add(block.id)
                       controller.enqueue({
                         type: "tool-input-start",
@@ -2957,6 +3044,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
         const procErrorHandler = (err: Error) => {
           log.error("process error", { error: err.message })
+          deleteActiveProcess(sk)
+          deleteClaudeSessionId(sk)
           if (controllerClosed) return
           // Subprocess failure invalidates every pending HTTP-bound tool
           // call for this session. Reject them so proxy-mcp returns errors

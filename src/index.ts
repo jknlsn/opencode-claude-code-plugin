@@ -77,6 +77,10 @@ export function createClaudeCode(
       autoContinueIncompleteTurns:
         settings.autoContinueIncompleteTurns ?? "smart",
       compactionModel: settings.compactionModel,
+      interactive: settings.interactive,
+      interactiveBypass: settings.interactiveBypass,
+      interactiveAllowTools: settings.interactiveAllowTools,
+      interactiveSystemPrompt: settings.interactiveSystemPrompt,
     })
   }
 

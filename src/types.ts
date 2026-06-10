@@ -5,6 +5,16 @@ export type { LogLevel, LogMode }
 export interface ClaudeCodeConfig {
   provider: string
   cliPath: string
+  /** Drive interactive claude (subscription) instead of headless --print. */
+  interactive?: boolean
+  /** Deprecated/no-op with interactive: Claude Code's TUI requires manual confirmation for bypassPermissions. */
+  interactiveBypass?: boolean
+  /** With interactive: built-in tools to allow without prompting (replaces
+   *  the default Bash/Edit/Write/Read/WebFetch list; MCP wildcards are always
+   *  derived from the bridged config). */
+  interactiveAllowTools?: string[]
+  /** With interactive: append this plugin's own prompts via --append-system-prompt-file. Defaults to true. */
+  interactiveSystemPrompt?: boolean
   cwd?: string
   account?: string
   configDir?: string
@@ -60,6 +70,16 @@ export type WebSearchRouting = "claude" | "disabled" | (string & {})
 
 export interface ClaudeCodeProviderSettings {
   cliPath?: string
+  /** Drive interactive claude (subscription) instead of headless --print. */
+  interactive?: boolean
+  /** Deprecated/no-op with interactive: Claude Code's TUI requires manual confirmation for bypassPermissions. */
+  interactiveBypass?: boolean
+  /** With interactive: built-in tools to allow without prompting (replaces
+   *  the default Bash/Edit/Write/Read/WebFetch list; MCP wildcards are always
+   *  derived from the bridged config). */
+  interactiveAllowTools?: string[]
+  /** With interactive: append this plugin's own prompts via --append-system-prompt-file. Defaults to true. */
+  interactiveSystemPrompt?: boolean
   cwd?: string
   name?: string
   providerID?: string
