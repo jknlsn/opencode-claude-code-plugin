@@ -80,6 +80,7 @@ export function createClaudeCode(
       interactive: settings.interactive,
       interactiveBypass: settings.interactiveBypass,
       interactiveAllowTools: settings.interactiveAllowTools,
+      interactiveSystemPrompt: settings.interactiveSystemPrompt,
     })
   }
 

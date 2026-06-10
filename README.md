@@ -210,8 +210,9 @@ The account model IDs are internally suffixed, for example `claude-sonnet-4-6@wo
 | `autoContinueIncompleteTurns` | boolean \| `"smart"` | `"smart"` | Smartly continue incomplete Claude CLI results inside the same opencode turn. Reduces manual "continue" presses when Claude ends after reasoning/tool activity without a useful final answer. Set `false` to disable. |
 | `compactionModel` | string | `"claude-haiku-4-5"` | Model used when opencode invokes `/compact`. Override per-process via the `CLAUDE_CODE_COMPACTION_MODEL` env var (env wins over config). See [Compaction](#compaction). |
 | `interactive` | boolean | `false` | **Experimental.** Drive the interactive `claude` TUI (subscription billing) instead of headless `--print`. Requires opencode running under Bun with PTY support; silently falls back to headless otherwise. Env: `CLAUDE_CODE_INTERACTIVE_TRANSPORT=1`. See [Interactive transport](#interactive-transport-experimental). |
-| `interactiveBypass` | boolean | `false` | With `interactive`: pass `--permission-mode bypassPermissions` (skips the folder-trust gate on first use of a directory). Env: `CLAUDE_CODE_INTERACTIVE_BYPASS=1`. |
+| `interactiveBypass` | boolean | `false` | Deprecated/no-op with `interactive`: Claude Code's TUI shows a manual safety confirmation for `bypassPermissions`, so the plugin intentionally does not pass it. |
 | `interactiveAllowTools` | string[] | `["Bash", "Edit", "Write", "Read", "WebFetch"]` | With `interactive`: built-in tools pre-allowed without prompting (replaces the default list). MCP server wildcards (`mcp__<server>__*`) are always added from the bridged config. |
+| `interactiveSystemPrompt` | boolean | `true` | With `interactive`: append this plugin's CLI/AGENTS/continuation prompt via `--append-system-prompt-file`. The transport intentionally does not forward opencode's own system prompt, because it can trigger Claude Code's third-party-app usage gate on subscription accounts. Set `false` only for diagnostics. |
 
 ### Overriding model metadata
 
@@ -242,10 +243,10 @@ Anything you supply is merged on top of the defaults; you don't need to redeclar
 By default the plugin spawns `claude --print` (headless). From **June 15, 2026** that usage bills against the separate [Agent SDK credit](#billing-change-june-15-2026-agent-sdk-credit) on subscription plans. The interactive transport instead drives the real interactive `claude` TUI — which bills as **normal plan usage** — under a native PTY inside opencode's Bun runtime, types your prompt into it, and streams the session transcript (`~/.claude/projects/<cwd>/<session-id>.jsonl`) back through the same pipeline the headless transport uses.
 
 ```json
-"options": { "interactive": true, "interactiveBypass": true }
+"options": { "interactive": true }
 ```
 
-Or per-process: `CLAUDE_CODE_INTERACTIVE_TRANSPORT=1` (and `CLAUDE_CODE_INTERACTIVE_BYPASS=1`).
+Or per-process: `CLAUDE_CODE_INTERACTIVE_TRANSPORT=1`.
 
 ### Requirements
 
@@ -254,17 +255,23 @@ Or per-process: `CLAUDE_CODE_INTERACTIVE_TRANSPORT=1` (and `CLAUDE_CODE_INTERACT
 
 ### What carries over from the headless transport
 
-- The appended system prompt (opencode agent prompts, continuation rules).
+- The plugin's appended prompt (Claude CLI context, AGENTS.md guidance, continuation rules). The interactive transport intentionally does not forward opencode's own system prompt, because live testing showed that payload can trigger Claude Code's third-party-app usage gate on subscription accounts.
 - The MCP bridge: bridged servers are passed via `--mcp-config` + `--strict-mcp-config`, and every bridged server is pre-allowed as `mcp__<server>__*`.
 - Model selection, session reuse, and the whole streaming/usage pipeline.
 
+Set `interactiveSystemPrompt: false` only for diagnostics. While disabled, the interactive session will not receive the plugin's CLI context, AGENTS.md guidance, or continuation hints.
+
 ### What's different
 
-- **Permissions:** the interactive TUI has no `can_use_tool` control channel, so tools can't be approved per-call through opencode. Built-in tools are pre-allowed via a settings allow list (default `Bash, Edit, Write, Read, WebFetch`; override with `interactiveAllowTools`). `interactiveBypass: true` additionally passes `--permission-mode bypassPermissions` so the folder-trust prompt can't wedge the session.
+- **Permissions:** the interactive TUI has no `can_use_tool` control channel, so tools can't be approved per-call through opencode. Built-in tools are pre-allowed via a settings allow list (default `Bash, Edit, Write, Read, WebFetch`; override with `interactiveAllowTools`). `bypassPermissions` is intentionally not used here because Claude Code shows a manual safety confirmation in the TUI and defaults to exit.
 - **Input is text-only:** images and other non-text blocks are dropped (with a logged warning); tool results are rendered as labeled text.
 - **Output granularity:** text arrives per transcript record, not token-by-token, so it can feel chunkier than headless streaming.
 - **Turn timeout:** a turn that produces no terminal stop within 30 minutes is reported honestly as an error result (visible truncation), not silently ended.
 - `/compact` always uses the headless transport regardless of this setting.
+
+### Known issue
+
+- **Fresh sessions can hang at startup.** With `interactive: true`, starting a brand-new opencode session (under Bun) can leave the TUI blank and unresponsive before you can type. Resuming an existing session (`opencode --continue`) works, and once a session is running the transport is stable. Until this is fixed, leave `interactive` unset (headless default) if you hit it. Tracked for a follow-up release.
 
 ---
 
@@ -534,7 +541,7 @@ Partial support since v0.5.1. DCP runs in a useful degraded mode: automatic stra
 | DCP feature | Status | Notes |
 |---|---|---|
 | `experimental.chat.messages.transform` (compression placeholders, dedup, error purge) | ✅ Works | Transforms run inside opencode before reaching this plugin. |
-| `experimental.chat.system.transform` (context-limit nudges, iteration reminders) | ✅ Works | `extractSystemMessages` forwards system-role content to Claude CLI via `--append-system-prompt-file`. |
+| `experimental.chat.system.transform` (context-limit nudges, iteration reminders) | ✅ Works in headless | Headless spawns forward system-role content via `--append-system-prompt-file`. Interactive mode intentionally omits opencode's forwarded system prompt and keeps only this plugin's CLI/AGENTS/continuation prompt. |
 | `/dcp compress`, `/dcp sweep`, `/dcp manual`, `/dcp context`, `/dcp stats` slash commands | ✅ Works | Handled by opencode's `command.execute.before` hook, not the model. |
 | Automatic `deduplication` + `purgeErrors` strategies | ✅ Works | Message-transform only, no model tool calls. |
 | Autonomous model-driven `compress` tool calls | ❌ Not supported | DCP registers `compress` as an opencode-native tool. Claude CLI only sees its own built-ins and MCP-bridged servers, so the model never sees `compress`. The plugin prepends a runtime note instructing Claude to ignore any system instruction that asks it to call `compress`/`distill`/`prune`. |

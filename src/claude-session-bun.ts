@@ -14,8 +14,9 @@ import { randomUUID } from "node:crypto"
  *   - ONE long-lived interactive `claude` process per session (multi-turn),
  *   - turns injected by writing into the terminal (bracketed paste + Enter),
  *   - replies captured by tailing the session JSONL transcript
- *     (~/.claude/projects/<encoded-cwd>/<session-id>.jsonl) and parsing the
- *     assistant records; completion detected by a terminal `stop_reason`.
+ *     (<CLAUDE_CONFIG_DIR>/projects/<encoded-cwd>/<session-id>.jsonl) and
+ *     parsing the assistant records; completion detected by a terminal
+ *     `stop_reason`.
  *
  * Driving the INTERACTIVE TUI (real TTY) keeps model calls on the subscription
  * billing path (not `claude -p` / Agent SDK, which meter after 2026-06-15).
@@ -65,6 +66,10 @@ export interface TurnResult {
 
 export interface ClaudeSessionOptions {
   cwd?: string
+  /** Claude CLI executable or account wrapper path. */
+  cliPath?: string
+  /** Claude config root used for JSONL transcripts (defaults to ~/.claude). */
+  configDir?: string
   model?: string
   /** '' bypasses CLAUDE.md + user/project/local settings load (fast tests).
    *  null/undefined omits the flag entirely (normal settings). */
@@ -99,9 +104,20 @@ export interface ClaudeSessionOptions {
 const TERMINAL_STOP = new Set(["end_turn", "stop_sequence", "max_tokens"])
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
+function resolveConfigDir(configDir: string | undefined): string {
+  const value = configDir ?? process.env.CLAUDE_CONFIG_DIR
+  if (!value) return path.join(os.homedir(), ".claude")
+  if (value === "~") return os.homedir()
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return path.join(os.homedir(), value.slice(2))
+  }
+  return path.resolve(value)
+}
+
 export class ClaudeSession {
   readonly sessionId: string
   readonly cwd: string
+  readonly configDir: string
   readonly jsonlPath: string
   raw = ""
 
@@ -109,26 +125,40 @@ export class ClaudeSession {
   private cursor = 0 // index into transcript split('\n')
   private lastDataAt = 0
   private exited = false
+  private exitCode: number | null = null
   private aborted = false
   private readonly signal?: AbortSignal
   private readonly o: Required<
-    Omit<ClaudeSessionOptions, "model" | "settingSources" | "extraArgs" | "signal">
+    Omit<
+      ClaudeSessionOptions,
+      | "cliPath"
+      | "configDir"
+      | "model"
+      | "settingSources"
+      | "extraArgs"
+      | "signal"
+    >
   > &
-    Pick<ClaudeSessionOptions, "model" | "settingSources" | "extraArgs">
+    Pick<
+      ClaudeSessionOptions,
+      "cliPath" | "configDir" | "model" | "settingSources" | "extraArgs"
+    >
 
   constructor(opts: ClaudeSessionOptions = {}) {
     this.cwd = path.resolve(opts.cwd ?? process.cwd())
+    this.configDir = resolveConfigDir(opts.configDir)
     this.signal = opts.signal
     this.sessionId = randomUUID()
     this.jsonlPath = path.join(
-      os.homedir(),
-      ".claude",
+      this.configDir,
       "projects",
       encodeCwd(this.cwd),
       `${this.sessionId}.jsonl`,
     )
     this.o = {
       cwd: this.cwd,
+      cliPath: opts.cliPath,
+      configDir: this.configDir,
       model: opts.model,
       settingSources: opts.settingSources,
       extraArgs: opts.extraArgs ?? [],
@@ -160,7 +190,7 @@ export class ClaudeSession {
       },
       { once: true },
     )
-    const claude = resolveClaude()
+    const claude = resolveClaude(this.o.cliPath ?? "claude")
     const args: string[] = ["--session-id", this.sessionId]
     if (this.o.model) args.push("--model", this.o.model)
     if (this.o.settingSources !== null && this.o.settingSources !== undefined) {
@@ -174,7 +204,11 @@ export class ClaudeSession {
     this.lastDataAt = Date.now()
     this.proc = Bun.spawn([claude, ...args], {
       cwd: this.cwd,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: this.o.configDir,
+        TERM: "xterm-256color",
+      },
       terminal: {
         cols: this.o.cols,
         rows: this.o.rows,
@@ -186,10 +220,16 @@ export class ClaudeSession {
         },
       },
     })
-    this.proc.exited.then(() => {
-      this.exited = true
-      this.proc = null
-    })
+    this.proc.exited
+      .then((code) => {
+        this.exitCode = typeof code === "number" ? code : null
+        this.exited = true
+        this.proc = null
+      })
+      .catch(() => {
+        this.exited = true
+        this.proc = null
+      })
 
     await this.waitForBoot()
     this.cursor = this.lineCount()
@@ -202,7 +242,9 @@ export class ClaudeSession {
     while (Date.now() - start < this.o.bootMaxMs) {
       await delay(150)
       if (this.aborted) throw new Error("aborted during boot")
-      if (this.exited) throw new Error("claude exited during boot")
+      if (this.exited) {
+        throw new Error(this.failureMessage("claude exited during boot", true))
+      }
       const elapsed = Date.now() - start
       const sinceData = Date.now() - this.lastDataAt
       if (elapsed >= this.o.bootMinMs && sinceData >= this.o.bootQuietMs) return
@@ -246,6 +288,26 @@ export class ClaudeSession {
     return lines.length > 0 ? lines.length - 1 : 0
   }
 
+  private rawTail(max = 600): string {
+    const clean = this.raw
+      // Strip ANSI escape/control sequences before including terminal output in diagnostics.
+      .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+    return clean.length > max ? clean.slice(-max) : clean
+  }
+
+  private failureMessage(reason: string, includeRaw = false): string {
+    const parts = [
+      `${reason} (sessionId=${this.sessionId}, jsonlPath=${this.jsonlPath}, exitCode=${this.exitCode ?? "unknown"})`,
+    ]
+    if (includeRaw) {
+      const tail = this.rawTail()
+      if (tail) parts.push(`terminalTail=${JSON.stringify(tail)}`)
+    }
+    return parts.join("; ")
+  }
+
   /**
    * Inject a turn into the live session and return the assistant reply once a
    * terminal stop_reason is observed in the transcript.
@@ -280,7 +342,7 @@ export class ClaudeSession {
       if (lastComplete <= this.cursor) {
         // Drain the transcript before reacting to exit: a final assistant record
         // can be flushed in the same tick the process exits.
-        if (this.exited) throw new Error("claude exited mid-turn")
+        if (this.exited) throw new Error(this.failureMessage("claude exited mid-turn", true))
         continue
       }
 
@@ -313,7 +375,9 @@ export class ClaudeSession {
 
     if (!stopReason) {
       throw new Error(
-        `turn timed out after ${timeout}ms (no terminal assistant record; collected ${collected.length} text block(s))`,
+        this.failureMessage(
+          `turn timed out after ${timeout}ms (no terminal assistant record; collected ${collected.length} text block(s))`,
+        ),
       )
     }
 
@@ -344,13 +408,13 @@ export class ClaudeSession {
     onLine: (rawLine: string) => void,
     perTurnTimeoutMs?: number
   ): Promise<{ stopReason: string | null; usage: any | null }> {
-    if (this.aborted) throw new Error('aborted')
+    if (this.aborted) throw new Error("aborted")
     if (!this.proc || this.exited)
-      throw new Error('session not started or already exited')
+      throw new Error("session not started or already exited")
     const timeout = perTurnTimeoutMs ?? this.o.turnTimeoutMs
 
     if (this.o.bracketedPaste) {
-      this.proc.terminal.write('\x1b[200~' + prompt + '\x1b[201~')
+      this.proc.terminal.write("\x1b[200~" + prompt + "\x1b[201~")
     } else {
       this.proc.terminal.write(prompt)
     }
@@ -363,13 +427,15 @@ export class ClaudeSession {
 
     while (Date.now() < deadline) {
       await delay(this.o.pollMs)
-      if (this.aborted) throw new Error('aborted mid-turn')
+      if (this.aborted) throw new Error("aborted mid-turn")
       const lines = this.readRawLines()
       const lastComplete = lines.length - 1
       if (lastComplete <= this.cursor) {
         // Drain the transcript before reacting to exit: the terminal assistant
         // record can land in the same tick the process exits.
-        if (this.exited) break
+        if (this.exited) {
+          throw new Error(this.failureMessage("claude exited mid-turn", true))
+        }
         continue
       }
       for (let i = this.cursor; i < lastComplete; i++) {
@@ -382,7 +448,7 @@ export class ClaudeSession {
         } catch {
           continue
         }
-        if (rec.type === 'assistant' && rec.message) {
+        if (rec.type === "assistant" && rec.message) {
           if (rec.message.usage) {
             lastUsage = rec.message.usage
             totalOutput += rec.message.usage.output_tokens ?? 0
@@ -415,6 +481,14 @@ export class ClaudeSession {
         usage.iterations = iters
       }
     }
+    if (!stopReason) {
+      throw new Error(
+        this.failureMessage(
+          `turn timed out after ${timeout}ms (no terminal assistant record)`,
+        ),
+      )
+    }
+
     return { stopReason, usage }
   }
 

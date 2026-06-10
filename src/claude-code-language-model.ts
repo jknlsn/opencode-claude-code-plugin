@@ -558,7 +558,7 @@ function extractSystemMessages(
   return out
 }
 
-function buildAppendedSystemPrompt(
+export function buildAppendedSystemPrompt(
   cwd: string,
   includeMultiStepHint = true,
   extraSystemContent: string[] = [],
@@ -1670,7 +1670,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       flagOn(process.env.CLAUDE_CODE_INTERACTIVE_TRANSPORT)
     const useInteractive =
       interactivePref && typeof (globalThis as any).Bun?.Terminal === "function"
-    const interactiveBypass =
+    const interactiveBypassRequested =
       this.config.interactiveBypass ??
       flagOn(process.env.CLAUDE_CODE_INTERACTIVE_BYPASS)
 
@@ -1869,22 +1869,35 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   "WebFetch",
                 ]),
               ]
-              // Same appended system prompt the headless spawn gets —
-              // without it the interactive session never sees opencode's
-              // system messages (agent prompts, continuation rules).
-              const systemPromptFile = buildAppendedSystemPrompt(
-                cwd,
-                self.config.multiStepContinuation !== false,
-                extractSystemMessages(options.prompt),
-              )
+              const systemPromptFile =
+                self.config.interactiveSystemPrompt === false
+                  ? undefined
+                  : buildAppendedSystemPrompt(
+                      cwd,
+                      self.config.multiStepContinuation !== false,
+                      // Do not forward opencode's own system prompt into the
+                      // interactive TUI. Live subscription-account testing
+                      // showed that large forwarded payload can trigger Claude
+                      // Code's third-party-app usage gate, while our static
+                      // CLI/AGENTS/continuation prompt remains safe.
+                    )
+              if (self.config.interactiveSystemPrompt === false) {
+                log.warn(
+                  "interactive system prompt disabled; opencode agent prompts will not be appended",
+                )
+              }
+              if (interactiveBypassRequested) {
+                log.warn(
+                  "interactiveBypass ignored: Claude Code prompts for bypassPermissions confirmation in the interactive TUI",
+                )
+              }
               const ap = spawnInteractiveProcess({
                 cwd,
+                cliPath,
+                configDir: self.config.configDir,
                 model: effectiveModelId,
                 mcpConfigPaths: mcp.paths,
                 permissionsAllow: allow,
-                permissionMode: interactiveBypass
-                  ? "bypassPermissions"
-                  : undefined,
                 systemPromptFile,
               })
               ap.mcpHash = mcp.bridgedHash
@@ -1892,7 +1905,12 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               proc = ap.proc
               lineEmitter = ap.lineEmitter
               activeProcess = ap
-              log.info("spawned interactive claude session", { sk })
+              log.info("spawned interactive claude session", {
+                sk,
+                cliPath,
+                configDir: self.config.configDir,
+                model: effectiveModelId,
+              })
             }
           } else {
           let cliArgs: string[]
@@ -3026,6 +3044,8 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
         const procErrorHandler = (err: Error) => {
           log.error("process error", { error: err.message })
+          deleteActiveProcess(sk)
+          deleteClaudeSessionId(sk)
           if (controllerClosed) return
           // Subprocess failure invalidates every pending HTTP-bound tool
           // call for this session. Reject them so proxy-mcp returns errors

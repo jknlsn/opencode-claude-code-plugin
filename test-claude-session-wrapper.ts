@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
+import * as path from "node:path"
 import { test } from "node:test"
 import {
   decodeUserEnvelope,
   spawnInteractiveProcess,
 } from "./src/claude-session-wrapper.js"
-import { encodeCwd } from "./src/claude-session-bun.js"
+import { ClaudeSession, encodeCwd } from "./src/claude-session-bun.js"
 
 // ---------------------------------------------------------------------------
 // decodeUserEnvelope — doStream writes stream-json envelopes to stdin; the
@@ -92,6 +93,17 @@ test("encodeCwd replaces every non-alphanumeric char with a dash", () => {
     assert.equal(encodeCwd("/Users/me/my-app"), "-Users-me-my-app")
     assert.equal(encodeCwd("/tmp/My Project"), "-tmp-My-Project")
   }
+})
+
+test("ClaudeSession uses configDir for the transcript path", () => {
+  const configDir = path.join(process.cwd(), ".tmp-claude-config")
+  const cwd = path.join(process.cwd(), "workspace")
+  const session = new ClaudeSession({ cwd, configDir })
+  assert.equal(session.configDir, configDir)
+  assert.equal(
+    session.jsonlPath,
+    path.join(configDir, "projects", encodeCwd(cwd), `${session.sessionId}.jsonl`),
+  )
 })
 
 // ---------------------------------------------------------------------------

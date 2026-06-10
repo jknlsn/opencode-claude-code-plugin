@@ -92,7 +92,7 @@ export async function ensureAccountRuntime(
     expandedConfigDir,
   )
 
-  return { cliPath, configDir }
+  return { cliPath, configDir: expandedConfigDir }
 }
 
 async function ensureSharedCapabilities(targetRoot: string): Promise<void> {

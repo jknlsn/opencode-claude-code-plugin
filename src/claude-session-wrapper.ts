@@ -6,12 +6,17 @@ import { log } from "./logger.js"
 
 export interface InteractiveSpawnOptions {
   cwd: string
+  /** Claude CLI executable or account wrapper path. */
+  cliPath?: string
+  /** Claude config root used for JSONL transcripts. */
+  configDir?: string
   model?: string
   /** Bridged Claude `--mcp-config` file paths (from effectiveMcpConfig). */
   mcpConfigPaths?: string[]
   /** permissions.allow rules (e.g. mcp__server__*, Bash, Edit). */
   permissionsAllow?: string[]
-  /** "default" | "bypassPermissions" (the latter dodges the folder-trust gate). */
+  /** Optional permission mode. `bypassPermissions` is ignored for interactive
+   *  sessions because Claude Code shows a safety confirmation screen first. */
   permissionMode?: string
   /** Temp file for --append-system-prompt-file (parity with the headless
    *  spawn; unlinked when the session is killed). */
@@ -101,7 +106,11 @@ export function spawnInteractiveProcess(
       JSON.stringify({ permissions: { allow: opts.permissionsAllow } }),
     )
   }
-  if (opts.permissionMode) {
+  if (opts.permissionMode === "bypassPermissions") {
+    log.warn(
+      "interactive permissionMode bypassPermissions ignored: Claude Code prompts for confirmation in the TUI",
+    )
+  } else if (opts.permissionMode) {
     extraArgs.push("--permission-mode", opts.permissionMode)
   }
   if (opts.systemPromptFile) {
@@ -110,12 +119,22 @@ export function spawnInteractiveProcess(
 
   const session = new ClaudeSession({
     cwd: opts.cwd,
+    cliPath: opts.cliPath,
+    configDir: opts.configDir,
     model: opts.model,
     // Default null = normal CLAUDE.md + settings load, matching what the
     // headless spawn does. "" (skip everything) is for fast e2e runs only.
     settingSources:
       opts.settingSources === undefined ? null : opts.settingSources,
     extraArgs,
+  })
+  log.info("prepared interactive claude session", {
+    cwd: opts.cwd,
+    cliPath: opts.cliPath ?? "claude",
+    configDir: session.configDir,
+    model: opts.model,
+    sessionId: session.sessionId,
+    jsonlPath: session.jsonlPath,
   })
 
   const lineEmitter = new EventEmitter()
@@ -125,6 +144,27 @@ export function spawnInteractiveProcess(
   const ensureStarted = (): Promise<void> => {
     if (!startPromise) startPromise = session.start()
     return startPromise
+  }
+
+  const emitResult = (
+    subtype: string,
+    isError: boolean,
+    result?: string,
+    usage?: unknown,
+  ): void => {
+    lineEmitter.emit(
+      "line",
+      JSON.stringify({
+        type: "result",
+        subtype,
+        is_error: isError,
+        result,
+        session_id: session.sessionId,
+        usage: usage ?? {},
+        total_cost_usd: null,
+        duration_ms: 0,
+      }),
+    )
   }
 
   const runTurn = (userMsg: string): void => {
@@ -140,24 +180,22 @@ export function spawnInteractiveProcess(
         // reported HONESTLY as an error result — not a clean end_turn — so
         // truncation is visible to the user and to auto-continue.
         const timedOut = !stopReason
-        lineEmitter.emit(
-          "line",
-          JSON.stringify({
-            type: "result",
-            subtype: timedOut ? "error_during_execution" : stopReason,
-            is_error: timedOut,
-            result: timedOut
-              ? "Interactive transport: the turn ended without a terminal stop_reason (turn timeout or claude exit). Output above may be incomplete."
-              : undefined,
-            session_id: session.sessionId,
-            usage: usage ?? {},
-            total_cost_usd: null,
-            duration_ms: 0,
-          }),
+        emitResult(
+          timedOut ? "error_during_execution" : stopReason,
+          timedOut,
+          timedOut
+            ? "Interactive transport: the turn ended without a terminal stop_reason (turn timeout or claude exit). Output above may be incomplete."
+            : undefined,
+          usage,
         )
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err))
         log.error("interactive turn failed", { error: e.message })
+        emitResult(
+          "error_during_execution",
+          true,
+          `Interactive transport failed: ${e.message}`,
+        )
         if (errorHandlers.size > 0) {
           for (const h of errorHandlers) h(e)
         } else {
