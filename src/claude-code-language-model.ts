@@ -208,6 +208,16 @@ interface AutoContinueState {
   noProgressCount: number
   lastSignature?: string
   aborted?: boolean
+  /**
+   * Latched true once AskUserQuestion is rendered this turn. Auto-continue
+   * must never fire afterwards: the model has handed control to the operator
+   * and is waiting for a real reply. Without this, a short trailing text after
+   * the question (one that doesn't trip looksLikeQuestion) would let the turn
+   * look "incomplete", and the auto-continue nudge would make the model
+   * proceed on its own — which the operator sees as the question being
+   * answered/cancelled without them ever interacting.
+   */
+  sawAskUserQuestion?: boolean
 }
 
 interface AutoContinueSnapshot {
@@ -266,10 +276,12 @@ export function isAskUserQuestionTool(name: string | undefined): boolean {
  */
 const ASK_USER_QUESTION_DENY_MESSAGE =
   "Your question and its options have already been presented to the" +
-  " operator verbatim. Stop now: end your turn without calling any more" +
-  " tools and without answering the question yourself. Wait for the" +
-  " operator's reply, which arrives as the next user message. Do not" +
-  " guess, assume, or proceed on their behalf."
+  " operator verbatim. This is NOT a cancellation or a refusal — the" +
+  " operator simply has not answered yet. Stop now: end your turn without" +
+  " calling any more tools and without answering the question yourself. Do" +
+  " not say the question was cancelled, skipped, or declined, and do not" +
+  " guess, assume, or proceed on their behalf. Wait for the operator's" +
+  " reply, which arrives as the next user message."
 
 /** Build the deny message for an auto-denied control request. */
 export function denyMessageForTool(
@@ -415,6 +427,10 @@ export function shouldAutoContinueIncompleteTurn(
   if (state.enabled === false) return { continue: false, reason: "disabled" }
   if (snapshot.isError) return { continue: false, reason: "error" }
   if (state.aborted) return { continue: false, reason: "aborted" }
+  // Once the model asked the operator a question this turn, never nudge it to
+  // continue — it is waiting for a reply, not stalled. Latched so it holds
+  // even when the trailing text after the question doesn't read as a question.
+  if (state.sawAskUserQuestion) return { continue: false, reason: "question" }
   // v0.4.17: trust ANY protocol-level stop_reason as authoritative. If
   // Claude CLI emitted a stop_reason value at all, the model has signaled
   // a stop — honor it without consulting the keyword heuristic. The
@@ -2422,6 +2438,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 } catch {}
 
                 if (isAskUserQuestionTool(tc.name)) {
+                  // Latch: the model handed control to the operator. Block any
+                  // auto-continue nudge for the rest of the turn so it can't
+                  // proceed on its own before the operator replies.
+                  autoContinueState.sawAskUserQuestion = true
                   const askId = startTextBlock()
                   controller.enqueue({
                     type: "text-delta",

@@ -600,3 +600,19 @@ test("v0.4.16 missing stop_reason falls through (back-compat)", () => {
   )
   assert.deepEqual(result, { continue: false, reason: "final-answer" })
 })
+
+test("sawAskUserQuestion latch blocks auto-continue even with non-question trailing text", () => {
+  // After AskUserQuestion the model may emit a short trailing line that does
+  // not read as a question (no '?'). Without the latch, that would look like
+  // an incomplete turn and trigger a nudge that makes the model proceed on
+  // its own. The latch must stop it regardless.
+  const result = shouldAutoContinueIncompleteTurn(
+    state({ sawAskUserQuestion: true }),
+    snap({
+      text: "I'll go with the first option.",
+      hadToolActivity: true,
+      stopReason: null,
+    }),
+  )
+  assert.deepEqual(result, { continue: false, reason: "question" })
+})

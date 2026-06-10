@@ -21,6 +21,10 @@ test("AskUserQuestion deny message stops unconditionally", () => {
   assert.match(msg, /stop now/i)
   assert.match(msg, /wait for the operator/i)
   assert.match(msg, /do not guess/i)
+  // Must explicitly defuse the "the user cancelled, so I'll proceed"
+  // rationalization the model otherwise reaches for after the deny.
+  assert.match(msg, /not a cancellation/i)
+  assert.match(msg, /cancelled, skipped, or declined/i)
   // None of the old "proceed if non-interactive" escape-hatch markers.
   assert.doesNotMatch(msg, /non-interactive/i)
   assert.doesNotMatch(msg, /reasonable/i)
