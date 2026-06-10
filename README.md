@@ -23,7 +23,7 @@ claude --version
 
 That's it. Restart opencode, pick a `claude-code` model, done.
 
-The plugin self-registers the `claude-code` provider, all current Claude Code models (Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8) with reasoning variants (`low` / `medium` / `high` / `xhigh` / `max`), and sensible defaults for tool proxying. You don't need to write a `provider` block at all unless you want to override something.
+The plugin self-registers the `claude-code` provider, all current Claude Code models (Haiku 4.5, Sonnet 4.5/4.6, Opus 4.5/4.6/4.7/4.8, Fable 5, Mythos 5) with reasoning variants (`low` / `medium` / `high` / `xhigh` / `max`), and sensible defaults for tool proxying. You don't need to write a `provider` block at all unless you want to override something.
 
 ---
 
@@ -66,17 +66,23 @@ In your `opencode.json`, point at the local build with a `file://` URL:
 
 The plugin auto-registers the following. They appear in the model picker without any extra config.
 
-| ID | Display name | Context | Output | Reasoning variants |
-|---|---|---|---|---|
-| `claude-haiku-4-5` | Claude Code Haiku 4.5 | 200k | 8,192 | – |
-| `claude-sonnet-4-5` | Claude Code Sonnet 4.5 | 1M | 16,384 | low/medium/high/xhigh/max |
-| `claude-sonnet-4-6` | Claude Code Sonnet 4.6 | 1M | 16,384 | low/medium/high/xhigh/max |
-| `claude-opus-4-5` | Claude Code Opus 4.5 | 1M | 16,384 | low/medium/high/xhigh/max |
-| `claude-opus-4-6` | Claude Code Opus 4.6 | 1M | 16,384 | low/medium/high/xhigh/max |
-| `claude-opus-4-7` | Claude Code Opus 4.7 | 1M | 16,384 | low/medium/high/xhigh/max |
-| `claude-opus-4-8` | Claude Code Opus 4.8 | 1M | 16,384 | low/medium/high/xhigh/max |
+| ID | Display name | Context | Output | Reasoning variants | Price × |
+|---|---|---|---|---|---|
+| `claude-haiku-4-5` | Claude Haiku 4.5 | 200k | 8,192 | – | 1× |
+| `claude-sonnet-4-5` | Claude Sonnet 4.5 | 1M | 16,384 | low/medium/high/xhigh/max | 3× |
+| `claude-sonnet-4-6` | Claude Sonnet 4.6 | 1M | 16,384 | low/medium/high/xhigh/max | 3× |
+| `claude-opus-4-5` | Claude Opus 4.5 | 1M | 16,384 | low/medium/high/xhigh/max | 5× |
+| `claude-opus-4-6` | Claude Opus 4.6 | 1M | 16,384 | low/medium/high/xhigh/max | 5× |
+| `claude-opus-4-7` | Claude Opus 4.7 | 1M | 16,384 | low/medium/high/xhigh/max | 5× |
+| `claude-opus-4-8` | Claude Opus 4.8 | 1M | 16,384 | low/medium/high/xhigh/max | 5× |
+| `claude-fable-5` | Claude Fable 5 | 1M | 16,384 | low/medium/high/xhigh/max | 10× |
+| `claude-mythos-5` | Claude Mythos 5 | 1M | 16,384 | low/medium/high/xhigh/max | 10× |
+
+`claude-mythos-5` is Mythos-class like Fable 5 but without safety classifiers, and is **limited availability via [Project Glasswing](https://anthropic.com/glasswing)**. It's registered unconditionally; if your Claude account lacks access, `claude --model claude-mythos-5` just errors. Use `claude-fable-5` (generally available) otherwise.
 
 Capabilities for every model: text + image input, text output, tool use, attachments. No temperature control, no PDF/audio/video, no interleaved streaming.
+
+**Price ×** is each model's per-token list price relative to Haiku, the cheapest model. It's derived exactly from Anthropic's published pricing — input and output ratios both come out the same (Haiku $1/$5 = 1×, Sonnet $3/$15 = 3×, Opus 4.8 $5/$25 = 5×, Fable 5 / Mythos 5 $10/$50 = 10×), so **Fable 5 and Mythos 5 cost 2× Opus 4.8**. The same multiplier is shown as a `(N×)` suffix on the display name in opencode's model picker, since opencode has no dedicated multiplier field. On a flat Max/Pro subscription it doubles as a rough guide to how fast each model drains your usage limit.
 
 The model ID is passed straight through to `claude --model`, so anything Claude Code accepts works.
 

@@ -25,13 +25,57 @@ test("configModelsForProvider emits real metadata, not schema defaults", () => {
   assert.ok(cost.output > 0, "cost.output must be populated")
 
   assert.equal(opus.family, "opus")
-  assert.equal(opus.name, "Claude Opus 4.8")
+  assert.equal(opus.name, "Claude Opus 4.8 (5×)")
   assert.ok(typeof opus.release_date === "string" && opus.release_date.length > 0)
   assert.equal(opus.reasoning, true)
 
   const variants = opus.variants as Record<string, unknown>
   assert.ok(variants && typeof variants === "object", "variants must be present")
   assert.ok("max" in variants, "default reasoning variants must be carried")
+})
+
+test("configModelsForProvider registers claude-fable-5 with real metadata", () => {
+  const models = configModelsForProvider({}, "claude-code")
+
+  const fable = models["claude-fable-5"] as Record<string, unknown>
+  assert.ok(fable, "claude-fable-5 should be present")
+
+  assert.equal(fable.family, "fable")
+  assert.equal(fable.name, "Claude Fable 5 (10×)")
+  assert.equal(fable.reasoning, true)
+
+  const limit = fable.limit as { context: number; output: number }
+  assert.ok(limit.context > 0, "limit.context must be populated")
+  assert.ok(limit.output > 0, "limit.output must be populated")
+
+  const cost = fable.cost as { input: number; output: number }
+  assert.ok(cost.input > 0, "cost.input must be populated")
+  assert.ok(cost.output > 0, "cost.output must be populated")
+
+  const variants = fable.variants as Record<string, unknown>
+  assert.ok(variants && "max" in variants, "reasoning variants must be carried")
+})
+
+test("configModelsForProvider registers claude-mythos-5 with real metadata", () => {
+  const models = configModelsForProvider({}, "claude-code")
+
+  const mythos = models["claude-mythos-5"] as Record<string, unknown>
+  assert.ok(mythos, "claude-mythos-5 should be present")
+
+  assert.equal(mythos.family, "mythos")
+  assert.equal(mythos.name, "Claude Mythos 5 (10×)")
+  assert.equal(mythos.reasoning, true)
+
+  const limit = mythos.limit as { context: number; output: number }
+  assert.ok(limit.context > 0, "limit.context must be populated")
+  assert.ok(limit.output > 0, "limit.output must be populated")
+
+  const cost = mythos.cost as { input: number; output: number }
+  assert.ok(cost.input > 0, "cost.input must be populated")
+  assert.ok(cost.output > 0, "cost.output must be populated")
+
+  const variants = mythos.variants as Record<string, unknown>
+  assert.ok(variants && "max" in variants, "reasoning variants must be carried")
 })
 
 test("configModelsForProvider preserves user-defined variants for default models", () => {

@@ -29,13 +29,20 @@ function defineModel(opts: {
   output: number
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number }
   releaseDate: string
+  // List-price multiplier relative to Haiku (the cheapest model). Derived
+  // exactly from published per-token pricing: input AND output ratios both come
+  // out to haiku 1, sonnet 3, opus 5, fable/mythos 10 — so Fable/Mythos are 2×
+  // Opus 4.8. Rendered as a `(N×)` suffix on the display name so it surfaces in
+  // opencode's model picker, which has no dedicated multiplier field.
+  // Display-only: model resolution keys off `id`.
+  multiplier: number
   status?: OpenCodeModel["status"]
 }): OpenCodeModel {
   return {
     id: opts.id,
     providerID: PROVIDER_ID,
     api: { id: opts.id, url: "", npm: NPM },
-    name: opts.name,
+    name: `${opts.name} (${opts.multiplier}×)`,
     family: opts.family,
     capabilities: { ...baseCapabilities, reasoning: opts.reasoning },
     cost: {
@@ -55,7 +62,13 @@ function defineModel(opts: {
 // Per-token costs derived from Anthropic per-million-token pricing
 const haikuCost = { input: 1e-6, output: 5e-6, cacheRead: 1e-7, cacheWrite: 1.25e-6 }
 const sonnetCost = { input: 3e-6, output: 15e-6, cacheRead: 3e-7, cacheWrite: 3.75e-6 }
-const opusCost = { input: 15e-6, output: 75e-6, cacheRead: 1.5e-6, cacheWrite: 18.75e-6 }
+// Opus 4.5+ standard pricing is $5/M in, $25/M out (the price cut at 4.5; held
+// through 4.6/4.7/4.8). Cache read 0.1x input, cache write 1.25x input.
+const opusCost = { input: 5e-6, output: 25e-6, cacheRead: 0.5e-6, cacheWrite: 6.25e-6 }
+// Fable 5 and Mythos 5 are the Mythos-class tier above Opus and share pricing
+// ($10/M in, $50/M out). Cache read/write follow Anthropic's standard 0.1x / 1.25x
+// input ratios (not separately published).
+const fableCost = { input: 10e-6, output: 50e-6, cacheRead: 1e-6, cacheWrite: 12.5e-6 }
 
 /**
  * Convert an OpenCodeModel to the flat config schema that OpenCode's
@@ -108,6 +121,7 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 200_000,
     output: 8_192,
     cost: haikuCost,
+    multiplier: 1,
     releaseDate: "2024-10-22",
   }),
   "claude-sonnet-4-5": defineModel({
@@ -118,6 +132,7 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: sonnetCost,
+    multiplier: 3,
     releaseDate: "2025-04-14",
   }),
   "claude-sonnet-4-6": defineModel({
@@ -128,6 +143,7 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: sonnetCost,
+    multiplier: 3,
     releaseDate: "2025-06-19",
   }),
   "claude-opus-4-5": defineModel({
@@ -138,6 +154,7 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: opusCost,
+    multiplier: 5,
     releaseDate: "2025-04-14",
   }),
   "claude-opus-4-6": defineModel({
@@ -148,6 +165,7 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: opusCost,
+    multiplier: 5,
     releaseDate: "2025-06-19",
   }),
   "claude-opus-4-7": defineModel({
@@ -158,6 +176,7 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: opusCost,
+    multiplier: 5,
     releaseDate: "2025-07-16",
   }),
   "claude-opus-4-8": defineModel({
@@ -168,6 +187,33 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     context: 1_000_000,
     output: 16_384,
     cost: opusCost,
+    multiplier: 5,
     releaseDate: "2026-05-28",
+  }),
+  "claude-fable-5": defineModel({
+    id: "claude-fable-5",
+    name: "Claude Fable 5",
+    family: "fable",
+    reasoning: true,
+    context: 1_000_000,
+    output: 16_384,
+    cost: fableCost,
+    multiplier: 10,
+    releaseDate: "2026-06-09",
+  }),
+  // Mythos 5 shares Fable 5's capabilities and pricing without the safety
+  // classifiers; limited availability via Project Glasswing. `claude --model
+  // claude-mythos-5` simply errors for accounts without access, so it's safe to
+  // register unconditionally.
+  "claude-mythos-5": defineModel({
+    id: "claude-mythos-5",
+    name: "Claude Mythos 5",
+    family: "mythos",
+    reasoning: true,
+    context: 1_000_000,
+    output: 16_384,
+    cost: fableCost,
+    multiplier: 10,
+    releaseDate: "2026-06-09",
   }),
 }
