@@ -2005,7 +2005,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
           const toolCallMap = new Map<
             number,
-            { id: string; name: string; inputJson: string }
+            { id: string; name: string; inputJson: string; started: boolean }
           >()
           // Tool calls the plugin reported as providerExecuted:false — opencode
           // will run these itself and emit its own tool-result, so we must NOT
@@ -2192,11 +2192,13 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
 
               if (block.type === "tool_use" && block.id && block.name) {
                 noteToolActivity()
-                toolCallMap.set(idx, {
+                const entry = {
                   id: block.id,
                   name: block.name,
                   inputJson: "",
-                })
+                  started: false,
+                }
+                toolCallMap.set(idx, entry)
 
                 if (
                   block.name !== "AskUserQuestion" &&
@@ -2214,6 +2216,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     },
                   )
                   if (!skip) {
+                    entry.started = true
                     controller.enqueue({
                       type: "tool-input-start",
                       id: block.id,
@@ -2274,11 +2277,19 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 const tc = toolCallMap.get(idx)
                 if (tc) {
                   tc.inputJson += delta.partial_json
-                  controller.enqueue({
-                    type: "tool-input-delta",
-                    id: tc.id,
-                    delta: delta.partial_json,
-                  } as any)
+                  // Only forward deltas for tool calls whose tool-input-start
+                  // was actually emitted. Skipped tools (CLAUDE_INTERNAL_TOOLS,
+                  // TaskCreate/TaskUpdate, CLI-internal WebSearch, AskUserQuestion,
+                  // ExitPlanMode, proxy tools) never get a named start part, so
+                  // forwarding their deltas makes opencode's AI SDK bridge fall
+                  // back to a nameless pending part rendered as `⚙ unknown`.
+                  if (tc.started) {
+                    controller.enqueue({
+                      type: "tool-input-delta",
+                      id: tc.id,
+                      delta: delta.partial_json,
+                    } as any)
+                  }
                 }
               }
 
