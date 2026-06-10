@@ -1317,7 +1317,9 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
     const proc = spawn(this.config.cliPath, cliArgs, {
       cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: claudeSpawnEnv(),
+      env: claudeSpawnEnv({
+        ignoreAnthropicApiKey: this.config.ignoreAnthropicApiKey,
+      }),
       shell: process.platform === "win32",
     })
 
@@ -1899,6 +1901,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 mcpConfigPaths: mcp.paths,
                 permissionsAllow: allow,
                 systemPromptFile,
+                ignoreAnthropicApiKey: self.config.ignoreAnthropicApiKey,
               })
               ap.mcpHash = mcp.bridgedHash
               setActiveProcess(sk, ap)
@@ -2011,6 +2014,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               spawnProxyServer,
               spawnMcpHash,
               spawnSystemPromptFile,
+              self.config.ignoreAnthropicApiKey,
             )
             proc = ap.proc
             lineEmitter = ap.lineEmitter

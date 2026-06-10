@@ -52,10 +52,20 @@ export function isClaudeThinkingDisabled(): boolean {
   )
 }
 
-export function claudeSpawnEnv(): Record<string, string | undefined> {
+export function claudeSpawnEnv(opts?: {
+  ignoreAnthropicApiKey?: boolean
+}): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     ...process.env,
     TERM: "xterm-256color",
+  }
+
+  // Force subscription auth: with an API key in the env, Claude Code bills
+  // pay-as-you-go (Console) instead of the logged-in plan, bypassing the
+  // Agent SDK credit. Opt-in via `ignoreAnthropicApiKey`.
+  if (opts?.ignoreAnthropicApiKey) {
+    delete env.ANTHROPIC_API_KEY
+    delete env.ANTHROPIC_AUTH_TOKEN
   }
 
   // Default-on thinking summaries for opus-4-7 (which omits thinking by
@@ -129,6 +139,7 @@ export function spawnClaudeProcess(
   proxyServer?: ProxyMcpServer | null,
   mcpHash?: string | null,
   systemPromptFile?: string,
+  ignoreAnthropicApiKey?: boolean,
 ): ActiveProcess {
   evictIfNeeded()
   log.info("spawning new claude process", { cliPath, cliArgs, cwd, sessionKey })
@@ -136,7 +147,7 @@ export function spawnClaudeProcess(
   const proc = spawn(cliPath, cliArgs, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: claudeSpawnEnv(),
+    env: claudeSpawnEnv({ ignoreAnthropicApiKey }),
     shell: process.platform === "win32",
   })
 

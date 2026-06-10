@@ -34,6 +34,7 @@ export interface ClaudeCodeConfig {
   multiStepContinuation?: boolean
   autoContinueIncompleteTurns?: boolean | "smart"
   compactionModel?: string
+  ignoreAnthropicApiKey?: boolean
   logging?: LoggingConfig
 }
 
@@ -140,6 +141,18 @@ export interface ClaudeCodeProviderSettings {
    * (see opencode's agent docs).
    */
   proxyTools?: string[]
+
+  /**
+   * Strip `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` from the environment of
+   * every spawned `claude` process. When an API key is present, Claude Code
+   * authenticates with it (pay-as-you-go Console billing) instead of the
+   * logged-in Pro/Max subscription — silently bypassing the Agent SDK plan
+   * credit. Set this to `true` to force the CLI to fall back to its stored
+   * subscription auth. Defaults to `false` (the key is passed through, so
+   * deliberate API-key users are unaffected). Regardless of this setting, the
+   * plugin logs a one-time warning at startup when an API key is detected.
+   */
+  ignoreAnthropicApiKey?: boolean
 
   /**
    * Routing for Claude's built-in `WebSearch` tool.

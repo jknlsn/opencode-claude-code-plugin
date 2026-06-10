@@ -75,6 +75,9 @@ export interface ClaudeSessionOptions {
    *  null/undefined omits the flag entirely (normal settings). */
   settingSources?: string | null
   extraArgs?: string[]
+  /** Strip ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN from the spawn env so the
+   *  CLI uses subscription auth instead of pay-as-you-go API billing. */
+  ignoreAnthropicApiKey?: boolean
   cols?: number
   rows?: number
   bootMinMs?: number
@@ -137,11 +140,17 @@ export class ClaudeSession {
       | "settingSources"
       | "extraArgs"
       | "signal"
+      | "ignoreAnthropicApiKey"
     >
   > &
     Pick<
       ClaudeSessionOptions,
-      "cliPath" | "configDir" | "model" | "settingSources" | "extraArgs"
+      | "cliPath"
+      | "configDir"
+      | "model"
+      | "settingSources"
+      | "extraArgs"
+      | "ignoreAnthropicApiKey"
     >
 
   constructor(opts: ClaudeSessionOptions = {}) {
@@ -162,6 +171,7 @@ export class ClaudeSession {
       model: opts.model,
       settingSources: opts.settingSources,
       extraArgs: opts.extraArgs ?? [],
+      ignoreAnthropicApiKey: opts.ignoreAnthropicApiKey,
       cols: opts.cols ?? 200,
       rows: opts.rows ?? 50,
       bootMinMs: opts.bootMinMs ?? 3000,
@@ -208,6 +218,9 @@ export class ClaudeSession {
         ...process.env,
         CLAUDE_CONFIG_DIR: this.o.configDir,
         TERM: "xterm-256color",
+        ...(this.o.ignoreAnthropicApiKey
+          ? { ANTHROPIC_API_KEY: undefined, ANTHROPIC_AUTH_TOKEN: undefined }
+          : {}),
       },
       terminal: {
         cols: this.o.cols,

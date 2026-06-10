@@ -24,6 +24,9 @@ export interface InteractiveSpawnOptions {
   /** "" = skip CLAUDE.md + ambient settings (fast e2e); null/undefined =
    *  normal settings (default — parity with the headless transport). */
   settingSources?: string | null
+  /** Strip ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN from the spawn env so the
+   *  CLI uses subscription auth instead of pay-as-you-go API billing. */
+  ignoreAnthropicApiKey?: boolean
 }
 
 /**
@@ -127,6 +130,7 @@ export function spawnInteractiveProcess(
     settingSources:
       opts.settingSources === undefined ? null : opts.settingSources,
     extraArgs,
+    ignoreAnthropicApiKey: opts.ignoreAnthropicApiKey,
   })
   log.info("prepared interactive claude session", {
     cwd: opts.cwd,

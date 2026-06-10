@@ -37,6 +37,26 @@ function pickOpencodeDirectory(input: unknown): string | undefined {
   return undefined
 }
 
+let warnedAnthropicApiKey = false
+
+// One-time heads-up: an API key in the environment makes Claude Code bill
+// pay-as-you-go (Console) instead of the logged-in Pro/Max subscription, which
+// silently bypasses the Agent SDK plan credit. Surfaced once per process.
+function warnIfAnthropicApiKey(ignore: boolean | undefined): void {
+  if (warnedAnthropicApiKey) return
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) return
+  warnedAnthropicApiKey = true
+  if (ignore) {
+    log.warn(
+      "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN detected; stripping it from claude spawns (ignoreAnthropicApiKey) so requests use your subscription auth, not pay-as-you-go API billing.",
+    )
+  } else {
+    log.warn(
+      "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN detected; claude may bill as pay-as-you-go API usage instead of your subscription / Agent SDK credit. Set provider option `ignoreAnthropicApiKey: true` to force subscription auth.",
+    )
+  }
+}
+
 export function createClaudeCode(
   settings: ClaudeCodeProviderSettings = {},
 ): ClaudeCodeProvider {
@@ -48,6 +68,7 @@ export function createClaudeCode(
       level: settings.logging.level ?? "info",
     })
   }
+  warnIfAnthropicApiKey(settings.ignoreAnthropicApiKey)
   const cliPath =
     settings.cliPath ?? process.env.CLAUDE_CLI_PATH ?? "claude"
   const providerName = settings.providerID ?? settings.name ?? "claude-code"
@@ -77,6 +98,7 @@ export function createClaudeCode(
       autoContinueIncompleteTurns:
         settings.autoContinueIncompleteTurns ?? "smart",
       compactionModel: settings.compactionModel,
+      ignoreAnthropicApiKey: settings.ignoreAnthropicApiKey,
       interactive: settings.interactive,
       interactiveBypass: settings.interactiveBypass,
       interactiveAllowTools: settings.interactiveAllowTools,
