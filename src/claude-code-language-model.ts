@@ -14,7 +14,7 @@ import type {
   ClaudeStreamMessage,
   ReasoningEffort,
 } from "./types.js"
-import { mapTool } from "./tool-mapping.js"
+import { mapTool, isWebSearchTool, isWebSearchHandledByCli } from "./tool-mapping.js"
 import { applyTaskCreateToolResult } from "./todo-ledger.js"
 import { getClaudeUserMessage } from "./message-builder.js"
 import { bridgeOpencodeMcp, type RuntimeMcpStatus } from "./mcp-bridge.js"
@@ -2337,6 +2337,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                     delta: `\n\n${plan}\n\n---\n**Do you want to proceed with this plan?** (yes/no)\n`,
                   })
                   endTextBlock()
+                } else if (
+                  isWebSearchTool(tc.name) &&
+                  isWebSearchHandledByCli(self.config.webSearch)
+                ) {
+                  // Claude CLI runs WebSearch internally. Forwarding the
+                  // "WebSearch" tool-call part would render an invalid tool
+                  // row in opencode (no registry entry), so show the query
+                  // as a text line instead. The result stays CLI-internal.
+                  const query =
+                    typeof parsedInput?.query === "string"
+                      ? parsedInput.query
+                      : JSON.stringify(parsedInput)
+                  const searchId = startTextBlock()
+                  controller.enqueue({
+                    type: "text-delta",
+                    id: searchId,
+                    delta: `\n> **Web search:** ${query}\n`,
+                  })
+                  endTextBlock()
                 } else if (tc.name.startsWith(PROXY_TOOL_PREFIX)) {
                   log.debug("ignoring proxy tool_use block; broker handles it", {
                     name: tc.name,
@@ -2532,6 +2551,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                       type: "text-delta",
                       id: planId,
                       delta: `\n\n${plan}\n\n---\n**Do you want to proceed with this plan?** (yes/no)\n`,
+                    })
+                    endTextBlock()
+                  } else if (
+                    isWebSearchTool(block.name) &&
+                    isWebSearchHandledByCli(self.config.webSearch)
+                  ) {
+                    // CLI-internal WebSearch: render the query as text and
+                    // drop the call/result parts (no opencode registry entry
+                    // for "WebSearch" — would render as an invalid tool row).
+                    toolCallsById.delete(block.id)
+                    const query =
+                      typeof parsedInput?.query === "string"
+                        ? parsedInput.query
+                        : JSON.stringify(parsedInput)
+                    const searchId = startTextBlock()
+                    controller.enqueue({
+                      type: "text-delta",
+                      id: searchId,
+                      delta: `\n> **Web search:** ${query}\n`,
                     })
                     endTextBlock()
                   } else if (block.name.startsWith(PROXY_TOOL_PREFIX)) {

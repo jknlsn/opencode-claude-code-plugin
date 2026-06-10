@@ -5,7 +5,39 @@ import {
   applyTaskCreateToolResult,
   getLedger,
 } from "./src/todo-ledger.js"
-import { mapTool } from "./src/tool-mapping.js"
+import { mapTool, isWebSearchTool, isWebSearchHandledByCli } from "./src/tool-mapping.js"
+
+test("WebSearch with default routing is skipped, not forwarded (no opencode registry entry)", () => {
+  for (const route of [undefined, "claude" as const, "disabled" as const]) {
+    const result = mapTool("WebSearch", { query: "anthropic pricing" }, { webSearch: route })
+    assert.equal(result.skip, true, `route=${route} should skip`)
+    assert.equal(result.executed, true, `route=${route} runs inside Claude CLI`)
+    assert.equal(result.name, "WebSearch")
+    assert.deepEqual(result.input, { query: "anthropic pricing" })
+  }
+})
+
+test("WebSearch routed to an opencode tool is forwarded for opencode to execute", () => {
+  const result = mapTool(
+    "web_search",
+    { query: "anthropic pricing", extra: "dropped" },
+    { webSearch: "websearch_web_search_exa" },
+  )
+  assert.equal(result.skip, undefined)
+  assert.equal(result.executed, false)
+  assert.equal(result.name, "websearch_web_search_exa")
+  assert.deepEqual(result.input, { query: "anthropic pricing" })
+})
+
+test("isWebSearchTool / isWebSearchHandledByCli helpers", () => {
+  assert.equal(isWebSearchTool("WebSearch"), true)
+  assert.equal(isWebSearchTool("web_search"), true)
+  assert.equal(isWebSearchTool("WebFetch"), false)
+  assert.equal(isWebSearchHandledByCli(undefined), true)
+  assert.equal(isWebSearchHandledByCli("claude"), true)
+  assert.equal(isWebSearchHandledByCli("disabled"), true)
+  assert.equal(isWebSearchHandledByCli("websearch_web_search_exa"), false)
+})
 
 test("Read-only Claude CLI Task* tools are still skipped, not forwarded", () => {
   for (const name of ["TaskList", "TaskGet", "TaskStop"]) {

@@ -8,6 +8,21 @@ export interface MapToolOptions {
   toolUseId?: string
 }
 
+/** Claude CLI's built-in web search tool (name varies by CLI version). */
+export function isWebSearchTool(name: string): boolean {
+  return name === "WebSearch" || name === "web_search"
+}
+
+/**
+ * True when WebSearch runs inside Claude CLI (default) rather than being
+ * forwarded to an opencode tool. In that case the tool-call part must not
+ * reach opencode — "WebSearch" has no registry entry there and renders as
+ * an invalid tool row. Callers show the query as a text line instead.
+ */
+export function isWebSearchHandledByCli(route?: WebSearchRouting): boolean {
+  return !route || route === "claude" || route === "disabled"
+}
+
 /**
  * Map Claude CLI tool input (snake_case) to OpenCode tool input (camelCase)
  */
@@ -163,15 +178,19 @@ export function mapTool(
   }
 
   // WebSearch — routing controlled by config.webSearch
-  if (name === "WebSearch" || name === "web_search") {
+  if (isWebSearchTool(name)) {
     const mappedInput = input?.query ? { query: input.query } : input
     const route = opts?.webSearch
     if (route && route !== "claude" && route !== "disabled") {
       log.debug("routing WebSearch to opencode tool", { target: route, mappedInput })
       return { name: route, input: mappedInput, executed: false }
     }
+    // Claude CLI runs WebSearch internally; "WebSearch" has no opencode
+    // registry entry, so forwarding the tool-call part surfaces a
+    // "Model tried to call unavailable tool" invalid row in opencode.
+    // Skip the part — callers render the query as a text line instead.
     log.debug("WebSearch executed by Claude CLI", { mappedInput })
-    return { name: "WebSearch", input: mappedInput, executed: true }
+    return { name: "WebSearch", input: mappedInput, executed: true, skip: true }
   }
 
   // TaskOutput -> bash echo

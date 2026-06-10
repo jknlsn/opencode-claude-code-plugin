@@ -92,6 +92,34 @@ Variants set the underlying reasoning effort. They're regular opencode model var
 
 ---
 
+## Billing change: June 15, 2026 (Agent SDK credit)
+
+This plugin drives Claude Code headlessly (`claude --print`), which Anthropic bills as [`claude -p` / Agent SDK usage](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan). Starting **June 15, 2026**, on subscription plans that usage no longer counts toward your normal plan limits — it draws from a separate monthly **Agent SDK credit**:
+
+| Plan | Monthly credit |
+|---|---|
+| Pro | $20 |
+| Max 5x | $100 |
+| Max 20x | $200 |
+| Team Standard | $20/seat |
+| Team Premium | $100/seat |
+| Enterprise (Standard seats) | none |
+
+What this means for plugin users:
+
+- **Claim the credit once.** It's a one-time opt-in via your Claude account (claim emails started going out June 8, 2026); after that it refreshes every billing cycle. Unused credit does not roll over.
+- **When the credit runs out, plugin requests stop** until the next billing cycle — unless you enable usage credits in your Claude account, in which case overflow is billed at standard API rates.
+- **The credit is denominated in dollars at standard API rates**, so the Price × column above maps directly to how fast each model drains it — Fable 5 / Mythos 5 burn it 10× faster than Haiku, 2× faster than Opus 4.8.
+- **API-key auth is unaffected.** If your `claude` CLI authenticates with an Anthropic API key / Console billing instead of a subscription, nothing changes — pay-as-you-go as before.
+- **Interactive Claude Code in your terminal is unaffected.** The change targets programmatic usage only: the Agent SDK, `claude -p`, Claude Code GitHub Actions, and third-party apps like this plugin.
+
+Two related dates:
+
+- **June 15, 2026** also retires the original Claude 4 model IDs `claude-sonnet-4-20250514` and `claude-opus-4-20250514` from the API. The plugin doesn't register either, but model IDs pass straight through to `claude --model` — if you've configured one of these as an override, migrate to `claude-sonnet-4-6` / `claude-opus-4-8` before then.
+- **June 22, 2026** is the last day [Fable 5 is included at no extra cost](https://platform.claude.com/docs/en/about-claude/models/introducing-claude-fable-5-and-claude-mythos-5) on Pro, Max, Team, and seat-based Enterprise plans. From June 23, `claude-fable-5` requires usage credits (Anthropic says it aims to fold it back into plans once capacity allows). `claude-mythos-5` is unaffected — it's Glasswing access-gated either way.
+
+---
+
 ## Configuration
 
 The minimum config is just the `plugin` entry above. Everything below is optional override that goes in a `provider.claude-code` block.
@@ -251,7 +279,7 @@ Claude Code ships a built-in `WebSearch` tool. The `webSearch` option controls w
 
 | `webSearch` value | Behavior | When to use |
 |---|---|---|
-| `"claude"` (default) | Claude CLI runs WebSearch internally via Anthropic. Zero setup, no extra cost, no API key. | Most users. |
+| `"claude"` (default) | Claude CLI runs WebSearch internally via Anthropic. Zero setup, no extra cost, no API key. The query is shown in the transcript as a `> Web search:` line (opencode has no `WebSearch` tool registry entry, so a raw tool row would render as `⚙ invalid`). | Most users. |
 | `"<opencode-tool-name>"` (e.g. `"websearch_web_search_exa"`) | Forward to that opencode-side tool with `executed:false`. Requires the corresponding MCP server to be configured in opencode (e.g. [exa-mcp-server](https://github.com/exa-labs/exa-mcp-server)). | You want a specific search backend (Exa, Tavily, Brave) and have the MCP wired up in opencode. |
 | `"disabled"` | `WebSearch` is added to `--disallowedTools` so the model can't call it. | Compliance/security scenarios where outbound search isn't allowed. |
 
