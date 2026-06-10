@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events"
+import { unlink } from "node:fs/promises"
 import { ClaudeSession } from "./claude-session-bun.js"
 import type { ActiveProcess } from "./session-manager.js"
 import { log } from "./logger.js"
@@ -12,8 +13,64 @@ export interface InteractiveSpawnOptions {
   permissionsAllow?: string[]
   /** "default" | "bypassPermissions" (the latter dodges the folder-trust gate). */
   permissionMode?: string
-  /** "" = skip CLAUDE.md + ambient settings (default); null = normal settings. */
+  /** Temp file for --append-system-prompt-file (parity with the headless
+   *  spawn; unlinked when the session is killed). */
+  systemPromptFile?: string
+  /** "" = skip CLAUDE.md + ambient settings (fast e2e); null/undefined =
+   *  normal settings (default — parity with the headless transport). */
   settingSources?: string | null
+}
+
+/**
+ * doStream writes stream-json user envelopes to stdin
+ * (`{"type":"user","message":{content:[...]}}`). The interactive TUI expects
+ * plain typed text, so decode the envelope: extract the text blocks and drop
+ * anything that can't be typed into a terminal (an image block would paste
+ * megabytes of base64 into the chat). Tool results are rendered as labeled
+ * text so the model still sees the outcome. Non-envelope input (already plain
+ * text) passes through verbatim.
+ */
+export function decodeUserEnvelope(chunk: string): string {
+  let parsed: any
+  try {
+    parsed = JSON.parse(chunk)
+  } catch {
+    return chunk
+  }
+  if (!parsed || parsed.type !== "user" || !parsed.message) return chunk
+  const content = parsed.message.content
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return chunk
+
+  const parts: string[] = []
+  let dropped = 0
+  for (const block of content) {
+    if (block?.type === "text" && typeof block.text === "string") {
+      parts.push(block.text)
+    } else if (block?.type === "tool_result") {
+      const v = block.content
+      const text =
+        typeof v === "string"
+          ? v
+          : Array.isArray(v)
+            ? v
+                .map((i: any) => (i?.type === "text" ? i.text : ""))
+                .filter(Boolean)
+                .join("\n")
+            : ""
+      parts.push(
+        `[Tool result${block.tool_use_id ? ` ${block.tool_use_id}` : ""}]\n${text}`,
+      )
+    } else {
+      dropped++
+    }
+  }
+  if (dropped > 0) {
+    log.warn("interactive transport dropped non-text content blocks", {
+      dropped,
+    })
+  }
+  return parts.join("\n\n")
 }
 
 /**
@@ -47,12 +104,17 @@ export function spawnInteractiveProcess(
   if (opts.permissionMode) {
     extraArgs.push("--permission-mode", opts.permissionMode)
   }
+  if (opts.systemPromptFile) {
+    extraArgs.push("--append-system-prompt-file", opts.systemPromptFile)
+  }
 
   const session = new ClaudeSession({
     cwd: opts.cwd,
     model: opts.model,
+    // Default null = normal CLAUDE.md + settings load, matching what the
+    // headless spawn does. "" (skip everything) is for fast e2e runs only.
     settingSources:
-      opts.settingSources === undefined ? "" : opts.settingSources,
+      opts.settingSources === undefined ? null : opts.settingSources,
     extraArgs,
   })
 
@@ -73,24 +135,26 @@ export function spawnInteractiveProcess(
           lineEmitter.emit("line", raw)
         })
         // Synthesize the `result` line the headless transport would have
-        // emitted, so doStream's existing finish branch runs verbatim.
+        // emitted, so doStream's existing finish branch runs verbatim. A turn
+        // with no terminal stop_reason (timeout / session exit mid-turn) is
+        // reported HONESTLY as an error result — not a clean end_turn — so
+        // truncation is visible to the user and to auto-continue.
+        const timedOut = !stopReason
         lineEmitter.emit(
           "line",
           JSON.stringify({
             type: "result",
-            subtype: stopReason ?? "end_turn",
-            is_error: false,
+            subtype: timedOut ? "error_during_execution" : stopReason,
+            is_error: timedOut,
+            result: timedOut
+              ? "Interactive transport: the turn ended without a terminal stop_reason (turn timeout or claude exit). Output above may be incomplete."
+              : undefined,
             session_id: session.sessionId,
             usage: usage ?? {},
             total_cost_usd: null,
             duration_ms: 0,
           }),
         )
-        if (!stopReason) {
-          // No terminal stop (timeout / process gone): graceful close so
-          // doStream emits finish(stop) instead of hanging.
-          lineEmitter.emit("close")
-        }
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err))
         log.error("interactive turn failed", { error: e.message })
@@ -108,11 +172,12 @@ export function spawnInteractiveProcess(
   const proc: any = {
     stdin: {
       write(chunk: string): boolean {
-        const userMsg =
+        const raw =
           typeof chunk === "string" && chunk.endsWith("\n")
             ? chunk.slice(0, -1)
             : chunk
-        runTurn(userMsg)
+        // doStream writes stream-json envelopes; the TUI needs plain text.
+        runTurn(decodeUserEnvelope(raw))
         return true
       },
       end(): void {},
@@ -136,6 +201,9 @@ export function spawnInteractiveProcess(
       try {
         session.dispose()
       } catch {}
+      if (opts.systemPromptFile) {
+        void unlink(opts.systemPromptFile).catch(() => {})
+      }
       proc.killed = true
       return true
     },
@@ -146,5 +214,6 @@ export function spawnInteractiveProcess(
     lineEmitter,
     proxyServer: null,
     mcpHash: undefined,
+    systemPromptFile: opts.systemPromptFile,
   }
 }

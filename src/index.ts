@@ -79,6 +79,7 @@ export function createClaudeCode(
       compactionModel: settings.compactionModel,
       interactive: settings.interactive,
       interactiveBypass: settings.interactiveBypass,
+      interactiveAllowTools: settings.interactiveAllowTools,
     })
   }
 

@@ -138,7 +138,10 @@ export class ClaudeSession {
       bootQuietMs: opts.bootQuietMs ?? 1500,
       bootMaxMs: opts.bootMaxMs ?? 25000,
       pollMs: opts.pollMs ?? 250,
-      turnTimeoutMs: opts.turnTimeoutMs ?? 120000,
+      // Agentic turns (tool loops) routinely run for many minutes; a short
+      // cap would surface as a mid-task error result. 30 min mirrors the
+      // proxy-tool ceiling rather than a chat-reply expectation.
+      turnTimeoutMs: opts.turnTimeoutMs ?? 1_800_000,
       bracketedPaste: opts.bracketedPaste ?? true,
       submitMinMs: opts.submitMinMs ?? 200,
       submitConfirmMs: opts.submitConfirmMs ?? 1500,

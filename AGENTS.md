@@ -7,12 +7,13 @@
 - `src/message-builder.ts` owns AI-SDK prompt → Claude CLI stream-json message conversion, including `/compact` transcript rendering.
 - `src/session-manager.ts` owns Claude CLI process reuse, session ids, LRU eviction, and CLI arg construction.
 - `src/cli-version.ts` gates optional CLI flags. Do not pass newly-added Claude CLI flags unconditionally.
+- `src/claude-session-bun.ts` + `src/claude-session-wrapper.ts` own the experimental interactive transport (from PR #10): the interactive `claude` TUI under Bun's native PTY, prompts typed via bracketed paste, output tailed from the session JSONL transcript. Opt-in via `interactive: true` / `CLAUDE_CODE_INTERACTIVE_TRANSPORT=1`; headless `--print` stays the default.
 - Build output is `dist/`, is gitignored, and is rebuilt by CI. Do not commit `dist/`.
 
 ## Commands
 
 - Typecheck: `npm run typecheck` (`tsc --noEmit`).
-- Test suite: `npm test`.
+- Test suite: `npm test`. The script enumerates test files explicitly — when adding a `test-*.ts` file you MUST add it to `package.json`'s `test` script or it silently never runs (this had drifted: `test-config-models.ts` and `test-ask-user-question.ts` were missing until 2026-06-10).
 - Single focused test file: `npx tsx --test test-get-claude-user-message.ts` (replace file as needed).
 - Build: `npm run build` (`tsup`, emits ESM + d.ts to `dist/`).
 - Before release, run: `npm run typecheck && npm test && npm run build`.
@@ -51,6 +52,8 @@
 - `cwd` resolution at spawn must stay lazy. `opencodeProjectDirectory` captured from `PluginInput.directory` lives in `runtime-status.ts` and is consumed via `resolveSpawnCwd()` at spawn time only as a fallback when `process.cwd()` is unusable (`/`). Do NOT bake the captured value into `mergedOptions.cwd` during provider registration in `index.ts` — that freezes it at plugin init and breaks workspace switching mid-session. The v0.2.4 fix did exactly this and it shipped as the v0.4.21 regression report on issue #4. Tests live in `test-cwd-resolution.ts`.
 - `AskUserQuestion` is auto-denied in `controlRequestBehaviorForTool` (so the headless CLI can't self-answer an empty TTY) and rendered to the operator as markdown via `formatAskUserQuestion`. The deny message (`denyMessageForTool` / `ASK_USER_QUESTION_DENY_MESSAGE` in `claude-code-language-model.ts`) must tell the model to **stop and wait unconditionally** — end the turn, no more tools, no self-answer. Before v0.7.0 it offered an "if non-interactive, proceed with a reasonable guess" escape hatch; the model could not tell interactive opencode from a headless run and routinely took it, so questions appeared skipped (issue #8). Do not re-add a proceed-anyway clause to that message. Behavior is verified via `denyMessageForTool` in `test-ask-user-question.ts`; the full stop-the-turn flow needs a live opencode session where the model calls AskUserQuestion.
 
+- Interactive transport (opt-in, `src/claude-session-bun.ts` + `src/claude-session-wrapper.ts`): `spawnInteractiveProcess` returns an `ActiveProcess`-shaped shim so doStream's line handler, session reuse, and eviction work unchanged. Key invariants: (1) doStream writes stream-json user envelopes to `stdin.write`; `decodeUserEnvelope` converts them to typed plain text — text blocks joined, `tool_result` rendered as labeled text, image/other blocks dropped with a logged warning (never paste base64 into a TTY). (2) The wrapper synthesizes the terminal `{type:"result"}` line; a turn with no terminal stop_reason (timeout/exit mid-turn) MUST stay `subtype: "error_during_execution", is_error: true` — do not "clean it up" to `end_turn`, that masks truncation from the user and from auto-continue. (3) The system prompt reaches the TUI only via `--append-system-prompt-file` (built per spawn, unlinked on kill); without it interactive sessions never see opencode agent prompts. (4) There is no `can_use_tool` control channel in the TUI — permissions are pre-allowed via `--settings '{"permissions":{"allow":[...]}}'`: MCP wildcards always derived from the live bridge config, built-ins from `interactiveAllowTools` (default Bash/Edit/Write/Read/WebFetch). (5) The `Bun.Terminal` capability gate falls back to headless silently. (6) Compaction always takes the headless path. Turn timeout default is 30 min (`turnTimeoutMs` in `claude-session-bun.ts`). Offline tests: `test-claude-session-wrapper.ts`; live verification needs a Bun-run opencode with `interactive: true`.
+
 ## Tests To Touch When Editing
 
 - Prompt/message conversion or compaction transcript behavior: `test-get-claude-user-message.ts`.
@@ -63,6 +66,7 @@
 - Spawn-time cwd resolution (`resolveSpawnCwd`, captured-directory fallback): `test-cwd-resolution.ts`.
 - AskUserQuestion deny/stop behavior (`denyMessageForTool`, `isAskUserQuestionTool`): `test-ask-user-question.ts`.
 - Config-path model metadata injection (`configModelsForProvider`): `test-config-models.ts`.
+- Interactive transport (`decodeUserEnvelope`, `spawnInteractiveProcess` shim shape): `test-claude-session-wrapper.ts`.
 
 ## Roadmap
 

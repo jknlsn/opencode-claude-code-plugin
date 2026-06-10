@@ -9,6 +9,10 @@ export interface ClaudeCodeConfig {
   interactive?: boolean
   /** With interactive: use --permission-mode bypassPermissions (folder-trust). */
   interactiveBypass?: boolean
+  /** With interactive: built-in tools to allow without prompting (replaces
+   *  the default Bash/Edit/Write/Read/WebFetch list; MCP wildcards are always
+   *  derived from the bridged config). */
+  interactiveAllowTools?: string[]
   cwd?: string
   account?: string
   configDir?: string
@@ -68,6 +72,10 @@ export interface ClaudeCodeProviderSettings {
   interactive?: boolean
   /** With interactive: use --permission-mode bypassPermissions (folder-trust). */
   interactiveBypass?: boolean
+  /** With interactive: built-in tools to allow without prompting (replaces
+   *  the default Bash/Edit/Write/Read/WebFetch list; MCP wildcards are always
+   *  derived from the bridged config). */
+  interactiveAllowTools?: string[]
   cwd?: string
   name?: string
   providerID?: string

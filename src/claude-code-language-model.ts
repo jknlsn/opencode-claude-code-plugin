@@ -1856,15 +1856,27 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               lineEmitter = activeProcess.lineEmitter
               log.debug("reusing active interactive session", { sk })
             } else {
+              // MCP wildcards are always derived from the live bridge config;
+              // the built-in tool list is overridable via interactiveAllowTools.
               const allow = [
                 ...mcp.allEnabledServerNames.map((n) => `mcp__${n}__*`),
                 "mcp__opencode_proxy__*",
-                "Bash",
-                "Edit",
-                "Write",
-                "Read",
-                "WebFetch",
+                ...(self.config.interactiveAllowTools ?? [
+                  "Bash",
+                  "Edit",
+                  "Write",
+                  "Read",
+                  "WebFetch",
+                ]),
               ]
+              // Same appended system prompt the headless spawn gets —
+              // without it the interactive session never sees opencode's
+              // system messages (agent prompts, continuation rules).
+              const systemPromptFile = buildAppendedSystemPrompt(
+                cwd,
+                self.config.multiStepContinuation !== false,
+                extractSystemMessages(options.prompt),
+              )
               const ap = spawnInteractiveProcess({
                 cwd,
                 model: effectiveModelId,
@@ -1873,6 +1885,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                 permissionMode: interactiveBypass
                   ? "bypassPermissions"
                   : undefined,
+                systemPromptFile,
               })
               ap.mcpHash = mcp.bridgedHash
               setActiveProcess(sk, ap)
