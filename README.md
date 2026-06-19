@@ -94,37 +94,11 @@ Variants set the underlying reasoning effort. They're regular opencode model var
 
 ---
 
-## Billing change: June 15, 2026 (Agent SDK credit)
+## Billing  
 
-This plugin drives Claude Code headlessly (`claude --print`), which Anthropic bills as [`claude -p` / Agent SDK usage](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan). Starting **June 15, 2026**, on subscription plans that usage no longer counts toward your normal plan limits — it draws from a separate monthly **Agent SDK credit**:
-
-| Plan | Monthly credit |
-|---|---|
-| Pro | $20 |
-| Max 5x | $100 |
-| Max 20x | $200 |
-| Team (Standard seats) | $20 |
-| Team (Premium seats) | $100 |
-| Enterprise (usage-based) | $20 |
-| Enterprise (seat-based Premium seats) | $200 |
-
-Credits are **per user, not pooled** across a team, and Standard seats on seat-based Enterprise plans aren't eligible. See Anthropic's [Agent SDK credit article](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) for the authoritative table.
-
-What this means for plugin users:
-
-- **Claim the credit once.** It's a one-time opt-in via your Claude account; eligible users get an email with claim instructions before June 15, 2026. After that it refreshes every billing cycle, and unused credit does not roll over.
-- **Agent SDK usage drains the credit first**, before any other source.
-- **When the credit runs out, plugin requests stop** until the next billing cycle — unless you enable usage credits in your Claude account, in which case overflow is billed at standard API rates.
-- **The credit is denominated in dollars at standard API rates**, so the Price × column above maps directly to how fast each model drains it — Fable 5 / Mythos 5 burn it 10× faster than Haiku, 2× faster than Opus 4.8.
-- **API-key auth is unaffected.** If your `claude` CLI authenticates with an Anthropic API key / Console billing instead of a subscription, nothing changes — pay-as-you-go as before.
-- **Watch for a stray `ANTHROPIC_API_KEY`.** If that variable (or `ANTHROPIC_AUTH_TOKEN`) is present in your environment, Claude Code uses it and bills pay-as-you-go — silently bypassing the subscription credit even when `claude` is logged into a plan. The plugin logs a one-time warning when it detects a key. To force subscription auth, set `ignoreAnthropicApiKey: true`, which strips the key from the `claude` spawn environment.
-- **Interactive Claude Code in your terminal is unaffected.** The change targets programmatic usage only: the Agent SDK, `claude -p`, Claude Code GitHub Actions, and third-party apps like this plugin.
-
-Two related dates:
-
-- **June 15, 2026** also retires the original Claude 4 model IDs `claude-sonnet-4-20250514` and `claude-opus-4-20250514` from the API. The plugin doesn't register either, but model IDs pass straight through to `claude --model` — if you've configured one of these as an override, migrate to `claude-sonnet-4-6` / `claude-opus-4-8` before then.
-- **June 22, 2026** is the last day [Fable 5 is included at no extra cost](https://platform.claude.com/docs/en/about-claude/models/introducing-claude-fable-5-and-claude-mythos-5) on Pro, Max, Team, and seat-based Enterprise plans. From June 23, `claude-fable-5` requires usage credits (Anthropic says it aims to fold it back into plans once capacity allows). `claude-mythos-5` is unaffected — it's Glasswing access-gated either way.
-
+This plugin drives Claude Code headlessly (Agent SDK > `claude --print`)  
+check out this page for updated information about billing: https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan
+  
 ---
 
 ## Configuration
