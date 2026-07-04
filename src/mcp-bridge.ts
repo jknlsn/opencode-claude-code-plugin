@@ -80,8 +80,8 @@ function dirExists(p: string): boolean {
   }
 }
 
-/** Strip `//` and `/* *\/` comments so JSONC parses via JSON.parse. */
-function stripJsonComments(text: string): string {
+/** Strip JSONC-only syntax so config parses via JSON.parse. */
+function stripJsoncSyntax(text: string): string {
   let out = ""
   let i = 0
   let inString: string | null = null
@@ -118,6 +118,14 @@ function stripJsonComments(text: string): string {
       i += 2
       continue
     }
+    if (c === ",") {
+      let j = i + 1
+      while (/\s/.test(text[j] ?? "")) j++
+      if (text[j] === "}" || text[j] === "]") {
+        i++
+        continue
+      }
+    }
     out += c
     i++
   }
@@ -127,7 +135,7 @@ function stripJsonComments(text: string): string {
 function readAndParse(file: string): Record<string, unknown> | null {
   try {
     const raw = fs.readFileSync(file, "utf8")
-    return JSON.parse(stripJsonComments(raw)) as Record<string, unknown>
+    return JSON.parse(stripJsoncSyntax(raw)) as Record<string, unknown>
   } catch (e) {
     log.warn("failed to parse opencode config", {
       file,
