@@ -43,6 +43,7 @@ import {
   createProxyMcpServer,
   disallowedToolFlags,
   DEFAULT_PROXY_TOOLS,
+  overlayTaskProxyDescription,
   PROXY_TOOL_PREFIX,
   type ProxyMcpServer,
   type ProxyToolCall,
@@ -526,6 +527,25 @@ blocker. The user can interrupt or abort at any time; turn endings should
 mark meaningful checkpoints, not every completed substep.`
 
 /**
+ * Appended to the system prompt whenever the `task` proxy tool is
+ * enabled. Live sessions (2026-07-04) showed models resolving opencode's
+ * "call the task tool with subagent: X" mention hint to Claude Code's
+ * native TaskCreate: haiku created a todo and narrated a dispatch that
+ * never happened; sonnet probed TaskCreate's schema before recovering.
+ * The proxy tool can also be deferred behind ToolSearch, in which case
+ * "the task tool" is invisible while TaskCreate is not. Name the exact
+ * tool, the recovery path, and the failure mode.
+ */
+export const SUBAGENT_DISPATCH_HINT = `## opencode subagents
+
+Subagent dispatch in this environment goes through exactly one tool: \`mcp__opencode_proxy__task\`.
+
+- When the user mentions \`@<agent>\` or an instruction says "call the task tool with subagent: <name>", call \`mcp__opencode_proxy__task\` with \`subagent_type: "<name>"\`.
+- If that tool is not in your visible tool list it is deferred — load it with ToolSearch (\`select:mcp__opencode_proxy__task\`), then call it.
+- Claude Code's built-in TaskCreate/TaskUpdate/TaskList manage a local todo list. They cannot dispatch subagents; creating a task there runs nothing. Never report a subagent as dispatched unless \`mcp__opencode_proxy__task\` returned its result.
+- Do not verify a subagent's existence by searching config files — the tool's description lists the available agent types, and invalid types fail fast with a clear error.`
+
+/**
  * Prepended to every appended system prompt so Claude knows which
  * context-management tools exist in the Claude CLI runtime versus a
  * direct API provider. DCP and similar plugins forward compress/distill/
@@ -772,6 +792,25 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
       })
     }
     return out.length > 0 ? out : null
+  }
+
+  /**
+   * Live description of opencode's `task` tool for the current
+   * provider/model, exactly as opencode's registry renders it for native
+   * models — including the "Available agent types" list (built from the
+   * default agent's permissions). Overlaid onto the static `task` proxy
+   * def so Claude sees the same subagent catalog native opencode models
+   * see, instead of hunting through config files. Returns undefined when
+   * the SDK client is unavailable (direct AI-SDK use, tests) so the
+   * static def stands.
+   */
+  private async fetchLiveTaskDescription(): Promise<string | undefined> {
+    const items = await fetchOpencodeToolList(
+      this.config.provider,
+      this.modelId,
+      this.config.cwd,
+    )
+    return items?.find((item) => item.id === "task")?.description || undefined
   }
 
   /**
@@ -1974,9 +2013,24 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ? new Set(discovery.allEnabledServerNames)
               : undefined
 
+            // Overlay opencode's live task-tool description (with the
+            // "Available agent types" list) onto the static `task` def so
+            // the model sees which subagents exist instead of grepping
+            // configs for them. Spawn-time only, like the rest of this
+            // block; a reused process keeps its original defs.
+            const taskProxyEnabled =
+              resolvedProxy?.some((t) => t.name === "task") ?? false
+            const enrichedProxy =
+              resolvedProxy && taskProxyEnabled
+                ? overlayTaskProxyDescription(
+                    resolvedProxy,
+                    await self.fetchLiveTaskDescription(),
+                  )
+                : resolvedProxy
+
             const combinedProxyTools: ProxyToolDef[] | null =
-              resolvedProxy || proxyMcpTools
-                ? [...(resolvedProxy ?? []), ...(proxyMcpTools ?? [])]
+              enrichedProxy || proxyMcpTools
+                ? [...(enrichedProxy ?? []), ...(proxyMcpTools ?? [])]
                 : null
 
             if (!proxyServer && combinedProxyTools) {
@@ -1998,7 +2052,10 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               : buildAppendedSystemPrompt(
                   cwd,
                   self.config.multiStepContinuation !== false,
-                  extractSystemMessages(options.prompt),
+                  [
+                    ...extractSystemMessages(options.prompt),
+                    ...(taskProxyEnabled ? [SUBAGENT_DISPATCH_HINT] : []),
+                  ],
                 )
             cliArgs = buildCliArgs({
               sessionKey: sk,

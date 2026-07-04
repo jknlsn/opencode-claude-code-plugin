@@ -269,7 +269,11 @@ By default, when Claude Code's CLI uses `Bash`, `Edit`, `Write`, etc., it execut
 | `"WebFetch"` | `WebFetch` | `mcp__opencode_proxy__webfetch` |
 | `"Task"` | `Agent` | `mcp__opencode_proxy__task` |
 
-The `Task` proxy is the way to let Claude orchestrate opencode's configured subagents (`build`, `general`, custom subagents defined in `opencode.json`) instead of Claude CLI's internal-only general-purpose / Explore / Plan options. With `"Task"` in `proxyTools` and `permission.task: allow` granted to the calling agent, a Claude session can invoke `task(subagent_type="build", prompt="...")` and the subagent runs natively under opencode (with its own permission UI, lifecycle, model assignment, and Tab visibility). Without `"Task"`, Claude's built-in `Agent` tool stays enabled and Claude orchestrates subagents internally with no opencode visibility.
+The `Task` proxy is the way to let Claude orchestrate opencode's configured subagents (`build`, `general`, custom subagents defined in `opencode.json`). With `"Task"` in `proxyTools` and `permission.task: allow` granted to the calling agent, a Claude session can invoke `task(subagent_type="build", prompt="...")` and the subagent runs natively under opencode (with its own permission UI, lifecycle, model assignment, and Tab visibility).
+
+Without `"Task"` there is no subagent path at all: recent Claude Code CLIs (verified on 2.1.197) expose **no** `Agent`/`Task` dispatch tool in headless `--print` mode, so a "use a subagent" request typically gets mis-resolved to the CLI's `TaskCreate` todo tool — a todo appears, nothing runs, and the model may still narrate a successful dispatch.
+
+To keep models from making that same mistake *with* the proxy enabled, the plugin does two things at spawn time: it overlays opencode's live `task` tool description (including the "Available agent types" list, so the model doesn't grep config files to check a subagent exists) onto the proxy def, and it appends a system-prompt note stating that `mcp__opencode_proxy__task` is the only dispatch path and that `TaskCreate`/`TaskUpdate` are todo tools. Note that both apply per Claude process at spawn, and provider options are read once at opencode startup — after adding `"Task"` to `proxyTools`, restart opencode fully.
 
 Only those five values are actually proxied; anything else you put in `proxyTools` is ignored. Proxying `Edit` also disables `MultiEdit` — opencode has no batched-edit equivalent, so Claude is forced to fan out into single `Edit` calls that each flow through the permission UI.
 

@@ -60,6 +60,43 @@ export const PROXY_TOOL_PREFIX = `mcp__${SERVER_NAME}__`
 // subprocess sits idle waiting for a tool result that never arrives.
 const PROXY_CALL_TIMEOUT_MS = 10 * 60 * 1000
 
+/**
+ * Disambiguation appended to the `task` proxy def (both the static
+ * fallback and the live overlay). Models routinely resolve opencode's
+ * "call the task tool with subagent: X" mention hint to Claude Code's
+ * native TaskCreate (a todo tool) — creating a todo, dispatching nothing,
+ * and then narrating a successful dispatch. Others burn turns grepping
+ * config files to verify a subagent exists before daring to call it.
+ * Both failure modes are addressed here, at the tool the model reads.
+ */
+export const TASK_PROXY_NOTE =
+  "This is the ONLY tool that dispatches opencode subagents (including" +
+  " user @-mentions). Claude Code's built-in TaskCreate/TaskUpdate manage" +
+  " a local todo list and cannot dispatch subagents. Do not search config" +
+  " files to verify a subagent type exists — invalid types fail fast with" +
+  " a clear error. The call blocks until the subagent finishes; the" +
+  " 10-minute proxy timeout applies."
+
+/**
+ * Overlay opencode's live `task` tool description (which includes the
+ * "Available agent types" list opencode's registry renders for native
+ * models) onto the static proxy def. No-op when the live description is
+ * unavailable (SDK client missing, older opencode) or the `task` def is
+ * not among the tools.
+ */
+export function overlayTaskProxyDescription(
+  tools: ProxyToolDef[],
+  liveDescription: string | undefined,
+): ProxyToolDef[] {
+  const live = liveDescription?.trim()
+  if (!live) return tools
+  return tools.map((t) =>
+    t.name === "task"
+      ? { ...t, description: `${live}\n\n${TASK_PROXY_NOTE}` }
+      : t,
+  )
+}
+
 export const DEFAULT_PROXY_TOOLS: ProxyToolDef[] = [
   {
     name: "bash",
@@ -166,8 +203,8 @@ export const DEFAULT_PROXY_TOOLS: ProxyToolDef[] = [
       " orchestration, permission, and lifecycle are handled by opencode." +
       " Use `subagent_type` to pick which configured subagent runs (e.g." +
       " `build`, `general`, `explore`, or any custom subagent declared in" +
-      " opencode.json). The call blocks until the subagent finishes; the" +
-      " 10-minute proxy timeout applies.",
+      " opencode.json). " +
+      TASK_PROXY_NOTE,
     inputSchema: {
       type: "object",
       properties: {
