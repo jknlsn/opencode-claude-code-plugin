@@ -190,6 +190,17 @@ export const defaultModels: Record<string, OpenCodeModel> = {
     multiplier: 5,
     releaseDate: "2026-05-28",
   }),
+  "claude-sonnet-5": defineModel({
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    family: "sonnet",
+    reasoning: true,
+    context: 1_000_000,
+    output: 16_384,
+    cost: sonnetCost,
+    multiplier: 3,
+    releaseDate: "2026-06-19",
+  }),
   "claude-fable-5": defineModel({
     id: "claude-fable-5",
     name: "Claude Fable 5",

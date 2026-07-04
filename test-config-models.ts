@@ -34,6 +34,28 @@ test("configModelsForProvider emits real metadata, not schema defaults", () => {
   assert.ok("max" in variants, "default reasoning variants must be carried")
 })
 
+test("configModelsForProvider registers claude-sonnet-5 with real metadata", () => {
+  const models = configModelsForProvider({}, "claude-code")
+
+  const sonnet = models["claude-sonnet-5"] as Record<string, unknown>
+  assert.ok(sonnet, "claude-sonnet-5 should be present")
+
+  assert.equal(sonnet.family, "sonnet")
+  assert.equal(sonnet.name, "Claude Sonnet 5 (3×)")
+  assert.equal(sonnet.reasoning, true)
+
+  const limit = sonnet.limit as { context: number; output: number }
+  assert.ok(limit.context > 0, "limit.context must be populated")
+  assert.ok(limit.output > 0, "limit.output must be populated")
+
+  const cost = sonnet.cost as { input: number; output: number }
+  assert.ok(cost.input > 0, "cost.input must be populated")
+  assert.ok(cost.output > 0, "cost.output must be populated")
+
+  const variants = sonnet.variants as Record<string, unknown>
+  assert.ok(variants && "max" in variants, "reasoning variants must be carried")
+})
+
 test("configModelsForProvider registers claude-fable-5 with real metadata", () => {
   const models = configModelsForProvider({}, "claude-code")
 
