@@ -78,6 +78,27 @@ export const TASK_PROXY_NOTE =
   " 10-minute proxy timeout applies."
 
 /**
+ * Disambiguation appended to the `question` proxy def. Claude Code ships
+ * a built-in `AskUserQuestion` that, when proxied, is disabled via
+ * `--disallowedTools`; without an explicit hand-off note models keep
+ * reaching for the disabled built-in or fall back to plain text. This
+ * states that the proxy is the structured-questions path and summarises
+ * the answer shape so the model can act on the result without a second
+ * round-trip.
+ */
+export const QUESTION_PROXY_NOTE =
+  "This routes structured questions through opencode's native `question`" +
+  " tool, which renders a TUI form with the options you provide and" +
+  " blocks until the operator answers. Claude Code's built-in" +
+  " AskUserQuestion is disabled in this environment; this proxy is the" +
+  " ONLY way to ask the operator for a decision or clarification." +
+  " Answers come back as arrays of selected labels (set `multiple: true`" +
+  " to allow more than one). If the operator dismisses the form the call" +
+  " returns an error — treat that as 'no answer' and stop, do not guess." +
+  " The 10-minute proxy timeout applies; for long-AFK scenarios prefer" +
+  " fewer, high-signal questions."
+
+/**
  * Overlay opencode's live `task` tool description (which includes the
  * "Available agent types" list opencode's registry renders for native
  * models) onto the static proxy def. No-op when the live description is
@@ -95,6 +116,40 @@ export function overlayTaskProxyDescription(
       ? { ...t, description: `${live}\n\n${TASK_PROXY_NOTE}` }
       : t,
   )
+}
+
+/**
+ * Overlay opencode's live `question` tool description onto the static
+ * proxy def, then append the disambiguation note. No-op when the live
+ * description is unavailable (older opencode, SDK client missing) — the
+ * static def + note stands. Mirrors `overlayTaskProxyDescription`.
+ */
+export function overlayQuestionProxyDescription(
+  tools: ProxyToolDef[],
+  liveDescription: string | undefined,
+): ProxyToolDef[] {
+  const live = liveDescription?.trim()
+  if (!live) return tools
+  return tools.map((t) =>
+    t.name === "question"
+      ? { ...t, description: `${live}\n\n${QUESTION_PROXY_NOTE}` }
+      : t,
+  )
+}
+
+/**
+ * Version gate for the `question` proxy. opencode added a built-in
+ * `question` tool (registry id `question`) — on older builds that entry
+ * is absent and a forwarded `mcp__opencode_proxy__question` call would
+ * resolve to `⚙ invalid` in opencode. Drop the def silently when the
+ * live registry does not contain it so the model never sees a dead tool.
+ */
+export function filterQuestionProxyByOpencodeSupport(
+  tools: ProxyToolDef[],
+  opencodeHasQuestion: boolean,
+): ProxyToolDef[] {
+  if (opencodeHasQuestion) return tools
+  return tools.filter((t) => t.name !== "question")
 }
 
 export const DEFAULT_PROXY_TOOLS: ProxyToolDef[] = [
@@ -235,6 +290,64 @@ export const DEFAULT_PROXY_TOOLS: ProxyToolDef[] = [
       required: ["description", "prompt", "subagent_type"],
     },
   },
+  {
+    name: "question",
+    description:
+      "Ask the operator structured questions with options and receive" +
+      " their answers back. Routed through opencode's native `question`" +
+      " tool so the prompt renders as a real TUI form (with options and a" +
+      " custom-answer field) instead of a plain text turn. Use this when" +
+      " you need a decision, clarification, or preference from the" +
+      " operator mid-task. " +
+      QUESTION_PROXY_NOTE,
+    inputSchema: {
+      type: "object",
+      properties: {
+        questions: {
+          type: "array",
+          description: "Questions to ask.",
+          items: {
+            type: "object",
+            properties: {
+              question: {
+                type: "string",
+                description: "Complete question.",
+              },
+              header: {
+                type: "string",
+                description: "Very short label (max 30 chars).",
+              },
+              options: {
+                type: "array",
+                description: "Available choices.",
+                items: {
+                  type: "object",
+                  properties: {
+                    label: {
+                      type: "string",
+                      description: "Display text (1-5 words, concise).",
+                    },
+                    description: {
+                      type: "string",
+                      description: "Explanation of choice.",
+                    },
+                  },
+                  required: ["label", "description"],
+                },
+              },
+              multiple: {
+                type: "boolean",
+                description:
+                  "Allow selecting multiple choices. Defaults to false.",
+              },
+            },
+            required: ["question", "header", "options"],
+          },
+        },
+      },
+      required: ["questions"],
+    },
+  },
 ]
 
 export async function createProxyMcpServer(
@@ -249,6 +362,16 @@ export async function createProxyMcpServer(
       res.end()
       return
     }
+    // Hoist the request id and method so the catch block can echo them
+    // in error responses. Without this, a broker rejection (timeout /
+    // orphan) on a tools/call lands in the catch with no visible id, and
+    // the response goes back with `id: null` which Claude CLI cannot
+    // match to the original request. The method is also needed because
+    // tools/call errors must be returned as MCP results with isError
+    // (not JSON-RPC errors) or Claude CLI rejects them as a "malformed
+    // result that failed schema validation" (seen live 2026-07-04).
+    let requestId: number | string | null = null
+    let requestMethod: string | null = null
     try {
       const body = await readBody(req)
       const request = JSON.parse(body) as {
@@ -257,6 +380,8 @@ export async function createProxyMcpServer(
         method?: string
         params?: Record<string, unknown>
       }
+      requestId = request?.id ?? null
+      requestMethod = typeof request?.method === "string" ? request.method : null
 
       if (request?.jsonrpc !== "2.0" || typeof request.method !== "string") {
         writeJson(res, {
@@ -315,12 +440,18 @@ export async function createProxyMcpServer(
         const input = (params.arguments ?? {}) as Record<string, unknown>
 
         if (!tools.some((t) => t.name === toolName)) {
+          // Return an MCP result with isError rather than a JSON-RPC
+          // error. Claude CLI validates tools/call responses against the
+          // MCP result schema and rejects JSON-RPC error envelopes as a
+          // "malformed result that failed schema validation".
           writeJson(res, {
             jsonrpc: "2.0",
-            id: request.id ?? null,
-            error: {
-              code: -32601,
-              message: `Unknown proxy tool: ${toolName}`,
+            id: requestId,
+            result: {
+              content: [
+                { type: "text", text: `Unknown proxy tool: ${toolName}` },
+              ],
+              isError: true,
             },
           })
           return
@@ -369,24 +500,19 @@ export async function createProxyMcpServer(
           pending.delete(callId)
         })
 
-        if (result.kind === "error") {
-          writeJson(res, {
-            jsonrpc: "2.0",
-            id: request.id ?? null,
-            error: {
-              code: -32000,
-              message: result.message,
-            },
-          })
-          return
-        }
-
+        // Unify success and error results into one MCP result envelope.
+        // A JSON-RPC error for `kind: "error"` was rejected by Claude
+        // CLI as a "malformed result that failed schema validation"
+        // because tools/call responses are validated as MCP results, so
+        // tool-execution errors must surface as `isError: true` instead.
+        const text = result.kind === "error" ? result.message : result.text
+        const isError = result.kind === "error" || result.isError === true
         writeJson(res, {
           jsonrpc: "2.0",
-          id: request.id ?? null,
+          id: requestId,
           result: {
-            content: [{ type: "text", text: result.text }],
-            isError: result.isError === true,
+            content: [{ type: "text", text }],
+            isError,
           },
         })
         return
@@ -394,7 +520,7 @@ export async function createProxyMcpServer(
 
       writeJson(res, {
         jsonrpc: "2.0",
-        id: request.id ?? null,
+        id: requestId,
         error: { code: -32601, message: `Unknown method: ${request.method}` },
       })
     } catch (error) {
@@ -414,14 +540,32 @@ export async function createProxyMcpServer(
         error: errorMessage,
       })
       try {
-        writeJson(res, {
-          jsonrpc: "2.0",
-          id: null,
-          error: {
-            code: -32603,
-            message: error instanceof Error ? error.message : "Internal error",
-          },
-        })
+        // For tools/call, Claude CLI validates the response against the
+        // MCP result schema and rejects JSON-RPC error envelopes as a
+        // "malformed result that failed schema validation". Broker
+        // timeouts and orphan rejections land here via call.reject on a
+        // real tools/call, so return an MCP result with isError instead.
+        // Other methods (initialize, tools/list) keep the JSON-RPC error
+        // shape — those are genuine protocol-level responses.
+        if (requestMethod === "tools/call") {
+          writeJson(res, {
+            jsonrpc: "2.0",
+            id: requestId,
+            result: {
+              content: [{ type: "text", text: errorMessage }],
+              isError: true,
+            },
+          })
+        } else {
+          writeJson(res, {
+            jsonrpc: "2.0",
+            id: requestId,
+            error: {
+              code: -32603,
+              message: errorMessage,
+            },
+          })
+        }
       } catch {
         try {
           res.statusCode = 500
@@ -527,6 +671,12 @@ export function disallowedToolFlags(tools: ProxyToolDef[]): string[] {
     grep: ["Grep"],
     webfetch: ["WebFetch"],
     task: ["Agent"],
+    // `question` disables Claude Code's built-in `AskUserQuestion` so the
+    // structured-questions path flows through opencode's native `question`
+    // tool instead — same UI/permission/audit benefits as the other
+    // proxies. Without this, the model can call both and the two paths
+    // diverge (opencode's form vs the headless deny-and-render fallback).
+    question: ["AskUserQuestion"],
   }
   const out: string[] = []
   const seen = new Set<string>()

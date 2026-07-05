@@ -268,6 +268,7 @@ By default, when Claude Code's CLI uses `Bash`, `Edit`, `Write`, etc., it execut
 | `"Write"` | `Write` | `mcp__opencode_proxy__write` |
 | `"WebFetch"` | `WebFetch` | `mcp__opencode_proxy__webfetch` |
 | `"Task"` | `Agent` | `mcp__opencode_proxy__task` |
+| `"Question"` | `AskUserQuestion` | `mcp__opencode_proxy__question` |
 
 The `Task` proxy is the way to let Claude orchestrate opencode's configured subagents (`build`, `general`, custom subagents defined in `opencode.json`). With `"Task"` in `proxyTools` and `permission.task: allow` granted to the calling agent, a Claude session can invoke `task(subagent_type="build", prompt="...")` and the subagent runs natively under opencode (with its own permission UI, lifecycle, model assignment, and Tab visibility).
 
@@ -275,7 +276,7 @@ Without `"Task"` there is no subagent path at all: recent Claude Code CLIs (veri
 
 To keep models from making that same mistake *with* the proxy enabled, the plugin does two things at spawn time: it overlays opencode's live `task` tool description (including the "Available agent types" list, so the model doesn't grep config files to check a subagent exists) onto the proxy def, and it appends a system-prompt note stating that `mcp__opencode_proxy__task` is the only dispatch path and that `TaskCreate`/`TaskUpdate` are todo tools. Note that both apply per Claude process at spawn, and provider options are read once at opencode startup — after adding `"Task"` to `proxyTools`, restart opencode fully.
 
-Only those five values are actually proxied; anything else you put in `proxyTools` is ignored. Proxying `Edit` also disables `MultiEdit` — opencode has no batched-edit equivalent, so Claude is forced to fan out into single `Edit` calls that each flow through the permission UI.
+Only those six values are actually proxied; anything else you put in `proxyTools` is ignored. Proxying `Edit` also disables `MultiEdit` — opencode has no batched-edit equivalent, so Claude is forced to fan out into single `Edit` calls that each flow through the permission UI. The `"Question"` proxy is version-gated on opencode's built-in `question` tool: on builds that lack the registry entry the def is silently dropped (a forwarded call would otherwise render as `⚙ invalid`), so add it only on opencode versions that ship the `question` tool.
 
 To turn off proxying entirely:
 
@@ -373,7 +374,23 @@ Set `permissionMode: "plan"` to forward `--permission-mode plan` to Claude. The 
 
 ## AskUserQuestion
 
-opencode has no native structured ask-question executor to proxy through (unlike `Bash`/`Task`), so the plugin handles `AskUserQuestion` specially:
+opencode ships a built-in `question` tool (`packages/opencode/src/tool/question.ts`) that renders a real TUI form with options and a custom-answer field — near-identical to Claude Code's `AskUserQuestion` (`multiSelect` → `multiple`). The plugin can route `AskUserQuestion` through it so the prompt becomes an actual form instead of plain text. Two modes:
+
+### With `"Question"` in `proxyTools` (recommended on supported opencode)
+
+Add `"Question"` to `proxyTools` and grant `permission.question: allow` to the calling agent. Claude's built-in `AskUserQuestion` is disabled via `--disallowedTools`, and the plugin exposes `mcp__opencode_proxy__question` in its place. The model calls the proxy, opencode renders the form, and the operator's answers come back as arrays of selected labels. On builds that lack the `question` registry entry the def is silently dropped at spawn (version gate), and the deny/markdown fallback below applies instead.
+
+```json
+"options": {
+  "proxyTools": ["Bash", "Edit", "Write", "WebFetch", "Question"]
+}
+```
+
+The same spawn-time caveats as `"Task"` apply: provider options are read once at opencode startup, so restart opencode fully after adding it. The proxy timeout is a hard 10 minutes — an operator AFK longer than that gets the call rejected mid-answer (per-tool timeouts are roadmap work).
+
+### Without the proxy (default fallback)
+
+When `"Question"` is not in `proxyTools` (or the opencode version lacks the `question` tool), the plugin handles `AskUserQuestion` as follows:
 
 1. **It renders the full question.** The tool's payload — every question, header, option label, and option description — is emitted as readable markdown into the assistant stream so the user actually sees the choices (same approach as `ExitPlanMode`).
 2. **It is never auto-allowed at the CLI gate.** Allowing it would let the headless Claude CLI resolve its own question (no TTY → fabricated/empty answer) and proceed on a guess. `controlRequestBehaviorForTool` hard-denies `AskUserQuestion` and returns a message telling the model to **stop and wait for the operator's answer** — end the turn, call no further tools, and never self-answer. (Before v0.7.0 this message also offered an "if the run is non-interactive, proceed with a reasonable guess" fallback. The model could not reliably tell interactive opencode from a headless run and routinely took it, so questions appeared to be skipped — [issue #8](https://github.com/khalilgharbaoui/opencode-claude-code-plugin/issues/8). For genuinely unattended runs, use the `controlRequestToolBehaviors` override below instead.)
@@ -445,7 +462,7 @@ The plugin respects the standard Claude Code thinking env vars. If you set them 
 
 - **Empty text blocks are dropped.** Claude sometimes opens a `content_block_start` for text but never sends a delta. The plugin no longer emits the empty block (which was triggering Anthropic 400s like `cache_control cannot be set for empty text blocks`).
 - **Smart incomplete-turn continuation.** By default, the plugin keeps the current opencode stream open and feeds Claude CLI a small internal continuation message when Claude emits a `result` after reasoning/tool activity without a useful visible answer. It still stops normally on final-looking answers, questions, blockers, errors, aborts, or internal safety-budget exhaustion. Disable with `"autoContinueIncompleteTurns": false`.
-- **`AskUserQuestion`** from the CLI is converted into plain text content rather than forwarded as a tool call.
+- **`AskUserQuestion`** from the CLI is converted into plain text content rather than forwarded as a tool call — unless `"Question"` is in `proxyTools`, in which case it is routed through opencode's native `question` tool (see [AskUserQuestion](#askuserquestion)).
 - **Wire-inactivity watchdog.** Once the CLI has produced any content, the stream closes gracefully if stdout goes silent for 60 seconds without a `result` message arriving. Resets on every line received, so long mid-turn pauses (Sonnet between text-end and the next tool_use, for example) are tolerated. On a user-initiated abort, the watchdog shortens to 5 seconds.
 - **Per-iteration usage.** When the CLI internally retries with tools, the plugin only counts the last iteration's usage so opencode's context accounting stays accurate.
 - **Lazy `cwd`.** The working directory is re-resolved at every request, so opencode's project-aware behavior works without restarting the plugin.

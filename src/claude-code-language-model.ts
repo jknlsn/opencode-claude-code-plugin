@@ -44,6 +44,8 @@ import {
   disallowedToolFlags,
   DEFAULT_PROXY_TOOLS,
   overlayTaskProxyDescription,
+  overlayQuestionProxyDescription,
+  filterQuestionProxyByOpencodeSupport,
   PROXY_TOOL_PREFIX,
   type ProxyMcpServer,
   type ProxyToolCall,
@@ -299,12 +301,16 @@ export function denyMessageForTool(
 /**
  * Render Claude Code's `AskUserQuestion` tool input as visible markdown.
  *
- * opencode has no native structured ask-question executor to proxy this
- * through (unlike bash/task), so the question + every option is rendered
- * as readable assistant text and the user answers in the next turn —
- * same approach as the `ExitPlanMode` handling. The previous behavior
- * collapsed the whole payload to a single faint `_Asking: <q>_` line,
- * dropping all options and any question past the first.
+ * This is the fallback path used when the `Question` proxy is off or the
+ * opencode build lacks the `question` registry entry. When the proxy is
+ * enabled, `AskUserQuestion` is disabled via `--disallowedTools` and the
+ * model calls `mcp__opencode_proxy__question` instead (opencode's native
+ * `question` tool renders the TUI form). Here, the question + every
+ * option is rendered as readable assistant text and the user answers in
+ * the next turn — same approach as the `ExitPlanMode` handling. The
+ * previous behavior collapsed the whole payload to a single faint
+ * `_Asking: <q>_` line, dropping all options and any question past the
+ * first.
  */
 function formatAskUserQuestion(input: Record<string, unknown>): string {
   const anyInput = input as any
@@ -544,6 +550,26 @@ Subagent dispatch in this environment goes through exactly one tool: \`mcp__open
 - If that tool is not in your visible tool list it is deferred — load it with ToolSearch (\`select:mcp__opencode_proxy__task\`), then call it.
 - Claude Code's built-in TaskCreate/TaskUpdate/TaskList manage a local todo list. They cannot dispatch subagents; creating a task there runs nothing. Never report a subagent as dispatched unless \`mcp__opencode_proxy__task\` returned its result.
 - Do not verify a subagent's existence by searching config files — the tool's description lists the available agent types, and invalid types fail fast with a clear error.`
+
+/**
+ * Appended to the system prompt whenever the `question` proxy tool is
+ * enabled. Live testing (2026-07-05, haiku) showed the model's reasoning
+ * correctly identified `mcp__opencode_proxy__question` as the tool to use,
+ * but then emitted a tool call for bare `question` — stripping the MCP
+ * prefix. opencode's AI SDK bridge has no bare `question` tool, so the
+ * call rendered as `⚙ invalid`. Same near-miss pattern the task proxy
+ * hit (TaskCreate vs mcp__opencode_proxy__task); the fix is the same:
+ * name the exact tool in the system prompt so the model doesn't
+ * abbreviate.
+ */
+export const QUESTION_PROXY_HINT = `## Asking the operator questions
+
+Structured questions in this environment go through exactly one tool: \`mcp__opencode_proxy__question\`.
+
+- When you need to ask the operator a question with options, call \`mcp__opencode_proxy__question\` with a \`questions\` array (each item has \`question\`, \`header\`, \`options\` of \`{label, description}\`, and optional \`multiple\`).
+- If that tool is not in your visible tool list it is deferred — load it with ToolSearch (\`select:mcp__opencode_proxy__question\`), then call it by its FULL name.
+- Do NOT call bare \`question\` — that is not a tool. Always use the full \`mcp__opencode_proxy__question\` name when invoking it.
+- Claude Code's built-in \`AskUserQuestion\` is disabled in this environment; the proxy is the only way to ask structured questions.`
 
 /**
  * Prepended to every appended system prompt so Claude knows which
@@ -795,22 +821,37 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
   }
 
   /**
-   * Live description of opencode's `task` tool for the current
-   * provider/model, exactly as opencode's registry renders it for native
-   * models — including the "Available agent types" list (built from the
-   * default agent's permissions). Overlaid onto the static `task` proxy
-   * def so Claude sees the same subagent catalog native opencode models
-   * see, instead of hunting through config files. Returns undefined when
-   * the SDK client is unavailable (direct AI-SDK use, tests) so the
-   * static def stands.
+   * Live tool info derived from a single `client.tool.list()` fetch:
+   *
+   * - `taskDescription`: opencode's `task` tool description exactly as the
+   *   registry renders it for native models, including the "Available
+   *   agent types" list. Overlaid onto the static `task` proxy def so
+   *   Claude sees the same subagent catalog native models see, instead
+   *   of hunting through config files.
+   * - `questionDescription` / `hasQuestion`: opencode's `question` tool
+   *   description and whether the registry has the entry at all. Older
+   *   builds lack it, in which case a `mcp__opencode_proxy__question`
+   *   call resolves to `⚙ invalid`; the version gate drops the def.
+   *
+   * Returns undefined/false when the SDK client is unavailable (direct
+   * AI-SDK use, tests) so the static defs stand.
    */
-  private async fetchLiveTaskDescription(): Promise<string | undefined> {
+  private async fetchLiveToolInfo(): Promise<{
+    taskDescription: string | undefined
+    questionDescription: string | undefined
+    hasQuestion: boolean
+  }> {
     const items = await fetchOpencodeToolList(
       this.config.provider,
       this.modelId,
       this.config.cwd,
     )
-    return items?.find((item) => item.id === "task")?.description || undefined
+    const question = items?.find((item) => item.id === "question")
+    return {
+      taskDescription: items?.find((item) => item.id === "task")?.description,
+      questionDescription: question?.description,
+      hasQuestion: !!question,
+    }
   }
 
   /**
@@ -2013,31 +2054,86 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
               ? new Set(discovery.allEnabledServerNames)
               : undefined
 
-            // Overlay opencode's live task-tool description (with the
-            // "Available agent types" list) onto the static `task` def so
-            // the model sees which subagents exist instead of grepping
-            // configs for them. Spawn-time only, like the rest of this
-            // block; a reused process keeps its original defs.
+            // Overlay opencode's live tool info onto the static proxy defs.
+            // Both the `task` description (with the "Available agent types"
+            // list, so the model sees which subagents exist instead of
+            // grepping configs) and the `question` version gate (older
+            // opencode builds lack the `question` registry entry; the def
+            // must be dropped or a forwarded call renders `⚙ invalid`)
+            // derive from a single tool-list fetch. Spawn-time only, like
+            // the rest of this block; a reused process keeps its defs.
             const taskProxyEnabled =
               resolvedProxy?.some((t) => t.name === "task") ?? false
-            const enrichedProxy =
-              resolvedProxy && taskProxyEnabled
-                ? overlayTaskProxyDescription(
-                    resolvedProxy,
-                    await self.fetchLiveTaskDescription(),
-                  )
-                : resolvedProxy
+            const questionProxyEnabled =
+              resolvedProxy?.some((t) => t.name === "question") ?? false
+            const liveToolInfo =
+              taskProxyEnabled || questionProxyEnabled
+                ? await self.fetchLiveToolInfo()
+                : {
+                    taskDescription: undefined,
+                    questionDescription: undefined,
+                    hasQuestion: false,
+                  }
+            let enrichedProxy = resolvedProxy
+            if (enrichedProxy && taskProxyEnabled) {
+              enrichedProxy = overlayTaskProxyDescription(
+                enrichedProxy,
+                liveToolInfo.taskDescription,
+              )
+            }
+            if (enrichedProxy && questionProxyEnabled) {
+              // When the version gate is about to drop the def
+              // (`hasQuestion === false`) the live description is moot,
+              // so only overlay when the entry actually exists.
+              enrichedProxy = overlayQuestionProxyDescription(
+                enrichedProxy,
+                liveToolInfo.hasQuestion
+                  ? liveToolInfo.questionDescription
+                  : undefined,
+              )
+              enrichedProxy = filterQuestionProxyByOpencodeSupport(
+                enrichedProxy,
+                liveToolInfo.hasQuestion,
+              )
+            }
 
+            // Combine the static proxy defs with any MCP-bridged proxy
+            // tools. Guard against the empty case: a version gate can
+            // drop every configured def (e.g. `proxyTools: ["Question"]`
+            // on an opencode build that lacks the `question` registry
+            // entry), and spinning up an MCP server with zero tools is
+            // wasteful and wrong shape.
+            const combinedList = [
+              ...(enrichedProxy ?? []),
+              ...(proxyMcpTools ?? []),
+            ]
             const combinedProxyTools: ProxyToolDef[] | null =
-              enrichedProxy || proxyMcpTools
-                ? [...(enrichedProxy ?? []), ...(proxyMcpTools ?? [])]
-                : null
+              combinedList.length > 0 ? combinedList : null
 
             if (!proxyServer && combinedProxyTools) {
               proxyServer = await self.ensureProxyServer(combinedProxyTools, sk)
             }
 
-            const proxyDisallowed = resolvedProxy ? disallowedToolFlags(resolvedProxy) : []
+            // Whether the question proxy actually survived the version
+            // gate (post-filter). Used to decide whether to inject the
+            // QUESTION_PROXY_HINT — if the gate dropped the def, the
+            // model must fall back to AskUserQuestion (the deny/markdown
+            // path) and must NOT be told to call a proxy tool that does
+            // not exist.
+            const questionProxyActive =
+              enrichedProxy?.some((t) => t.name === "question") ?? false
+
+            // Compute disallowed flags from the POST-FILTER proxy list
+            // (enrichedProxy), not the pre-filter one (resolvedProxy).
+            // When the version gate drops `question` on an older opencode
+            // build, AskUserQuestion must NOT be added to
+            // --disallowedTools — otherwise the native tool is disabled
+            // while the proxy replacement is absent, leaving the model
+            // with no way to ask questions at all (neither proxy nor the
+            // deny/markdown fallback path fires).
+            const proxyDisallowed = enrichedProxy
+              ? disallowedToolFlags(enrichedProxy)
+              : []
             const extraDisallowed: string[] = []
             if (self.config.webSearch === "disabled") extraDisallowed.push("WebSearch")
             const allDisallowed = [...proxyDisallowed, ...extraDisallowed]
@@ -2055,6 +2151,7 @@ export class ClaudeCodeLanguageModel implements LanguageModelV3 {
                   [
                     ...extractSystemMessages(options.prompt),
                     ...(taskProxyEnabled ? [SUBAGENT_DISPATCH_HINT] : []),
+                    ...(questionProxyActive ? [QUESTION_PROXY_HINT] : []),
                   ],
                 )
             cliArgs = buildCliArgs({

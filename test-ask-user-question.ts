@@ -43,3 +43,21 @@ test("non-question tools use configured or default deny message", () => {
     "Denied by opencode-claude-code policy for tool Bash",
   )
 })
+
+// Regression guard for the question proxy path: when "Question" is in
+// proxyTools, the model calls `mcp__opencode_proxy__question` instead of
+// the native `AskUserQuestion`. The proxy tool name must NOT be matched
+// by isAskUserQuestionTool, otherwise the sawAskUserQuestion latch would
+// fire on the proxied path too — blocking auto-continue even though the
+// proxy already blocked until the operator answered (no waiting needed).
+test("proxy question tool name is NOT matched by isAskUserQuestionTool", () => {
+  assert.equal(
+    isAskUserQuestionTool("mcp__opencode_proxy__question"),
+    false,
+  )
+  assert.equal(isAskUserQuestionTool("mcp__opencode_proxy__Question"), false)
+  // The native names the proxy replaces must still match, so the
+  // deny/markdown fallback stays correct when the proxy is off.
+  assert.equal(isAskUserQuestionTool("AskUserQuestion"), true)
+  assert.equal(isAskUserQuestionTool("ask_user_question"), true)
+})

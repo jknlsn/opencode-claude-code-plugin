@@ -9,6 +9,10 @@ import {
   cliSupportsThinking,
   cliSupportsThinkingDisplay,
 } from "./src/cli-version.js"
+import {
+  disallowedToolFlags,
+  type ProxyToolDef,
+} from "./src/proxy-mcp.js"
 
 function withClaudeThinkingEnv<T>(
   env: {
@@ -169,4 +173,94 @@ test("Claude thinking env defaults preserve explicit user choices", () => {
     assert.equal(isClaudeThinkingDisabled(), false)
     assert.equal(claudeSpawnEnv().CLAUDE_CODE_SHOW_THINKING_SUMMARIES, "1")
   })
+})
+
+// `disallowedToolFlags` translates resolved proxy tool names into the
+// Claude built-ins that must be passed to `--disallowedTools` so the
+// model can only reach the proxied MCP version. The `question` row is
+// the new one — it must disable Claude's built-in `AskUserQuestion` so
+// the structured-questions path flows through opencode's `question` tool.
+function proxyDef(name: string): ProxyToolDef {
+  return {
+    name,
+    description: "",
+    inputSchema: { type: "object", properties: {} },
+  }
+}
+
+test("disallowedToolFlags maps each proxy tool to its Claude built-ins", () => {
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("bash")]),
+    ["Bash"],
+  )
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("write")]),
+    ["Write"],
+  )
+  // Edit also disables MultiEdit (opencode has no batched-edit equivalent).
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("edit")]),
+    ["Edit", "MultiEdit"],
+  )
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("webfetch")]),
+    ["WebFetch"],
+  )
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("task")]),
+    ["Agent"],
+  )
+})
+
+test("disallowedToolFlags disables AskUserQuestion for the question proxy", () => {
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("question")]),
+    ["AskUserQuestion"],
+  )
+})
+
+test("disallowedToolFlags is case-insensitive on the proxy tool name", () => {
+  // `resolvedProxyTools` lowercases when matching DEFAULT_PROXY_TOOLS, but
+  // disallowedToolFlags must tolerate either casing since callers pass the
+  // def name as-authored.
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("Question")]),
+    ["AskUserQuestion"],
+  )
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("TASK")]),
+    ["Agent"],
+  )
+})
+
+test("disallowedToolFlags dedupes and preserves order across combined defs", () => {
+  // A real config typically has several proxies at once.
+  const out = disallowedToolFlags([
+    proxyDef("bash"),
+    proxyDef("edit"),
+    proxyDef("write"),
+    proxyDef("task"),
+    proxyDef("question"),
+  ])
+  assert.deepEqual(out, [
+    "Bash",
+    "Edit",
+    "MultiEdit",
+    "Write",
+    "Agent",
+    "AskUserQuestion",
+  ])
+})
+
+test("disallowedToolFlags ignores proxy tools with no Claude equivalent", () => {
+  // MCP-bridged proxy tools (server-derived names) have no entry in the
+  // nameMap and must be skipped, not crash.
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("slack_post_message")]),
+    [],
+  )
+  assert.deepEqual(
+    disallowedToolFlags([proxyDef("bash"), proxyDef("slack_post_message")]),
+    ["Bash"],
+  )
 })
