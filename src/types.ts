@@ -28,6 +28,7 @@ export interface ClaudeCodeConfig {
   controlRequestToolBehaviors?: Record<string, ControlRequestBehavior>
   controlRequestDenyMessage?: string
   proxyTools?: string[]
+  proxyToolTimeoutMs?: Record<string, number>
   webSearch?: WebSearchRouting
   hotReloadMcp?: boolean
   proxyOpencodeMcpTools?: boolean
@@ -147,6 +148,24 @@ export interface ClaudeCodeProviderSettings {
     * entry, in which case the deny/markdown fallback applies.
     */
   proxyTools?: string[]
+
+  /**
+   * Per-tool proxy call timeouts in milliseconds, keyed by the proxy tool
+   * name (`bash`, `edit`, `write`, `webfetch`, `task`, `question` —
+   * case-insensitive). When a proxied tool call waits longer than its
+   * deadline for opencode to resolve it, the call is rejected and Claude
+   * receives a timeout error.
+   *
+   * Defaults (used when a tool is absent here): `bash`/`edit`/`write`/
+   * `webfetch` → 10 min (matches Claude CLI's Bash ceiling); `task` →
+   * 60 min (subagents routinely run 20–40 min); `question` → 30 min
+   * (operator AFK). Setting a key here replaces the default for that tool.
+   *
+   * For `bash` specifically the call's own `input.timeout` is honoured on
+   * top: the effective deadline is `max(resolved, input.timeout)`, so a
+   * long build the caller explicitly asked to run is never undercut.
+   */
+  proxyToolTimeoutMs?: Record<string, number>
 
   /**
    * Strip `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` from the environment of

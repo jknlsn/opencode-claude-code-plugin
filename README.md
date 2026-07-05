@@ -180,6 +180,7 @@ The account model IDs are internally suffixed, for example `claude-sonnet-4-6@wo
 | `skipPermissions` | boolean | `true` | Pass `--dangerously-skip-permissions` to `claude`. Ignored when `proxyTools` is set — the proxy handles permissions through opencode instead. |
 | `permissionMode` | `acceptEdits` \| `auto` \| `bypassPermissions` \| `default` \| `dontAsk` \| `plan` | – | Forwarded to `claude --permission-mode`. |
 | `proxyTools` | string[] | `["Bash", "Edit", "Write", "WebFetch"]` | Claude built-in tools to route through opencode's executor + permission UI. See [Selective tool proxy](#selective-tool-proxy). |
+| `proxyToolTimeoutMs` | `Record<string, number>` | – | Per-tool proxy call deadline in ms, keyed by proxy tool name (`bash`, `task`, `question`, …). Defaults: `bash`/`edit`/`write`/`webfetch` → 10 min, `task` → 60 min, `question` → 30 min. For `bash`, the call's own `input.timeout` is honoured on top (`max(resolved, input.timeout)`). See [Selective tool proxy](#selective-tool-proxy). |
 | `controlRequestBehavior` | `allow` \| `deny` | `allow` | Default response when `skipPermissions: false` and Claude sends a `can_use_tool` control request. |
 | `controlRequestToolBehaviors` | `Record<string, "allow" \| "deny">` | – | Per-tool override for `can_use_tool`. Example: `{ "Bash": "deny", "Read": "allow" }`. |
 | `controlRequestDenyMessage` | string | built-in message | Message returned to Claude on a deny. |
@@ -295,6 +296,24 @@ To turn off proxying entirely:
 - A small per-call latency hop through `127.0.0.1:<random>/mcp`.
 - Batched-edit ergonomics: with `Edit` proxied, Claude can no longer use `MultiEdit`, so a refactor that would have been one tool call becomes N single `Edit` calls.
 
+### Per-tool proxy timeouts
+
+Every proxied tool call has a deadline: if opencode hasn't resolved it (run the underlying tool and returned a result) within that many milliseconds, the call is rejected and Claude receives a timeout error. Deadlines are resolved per tool, most-specific layer winning:
+
+1. flat default — 10 min (matches Claude CLI's own Bash ceiling)
+2. per-tool default — **`task`: 60 min**, **`question`: 30 min**, everything else: 10 min
+3. your `proxyToolTimeoutMs` override (case-insensitive key)
+4. for `bash` only, the call's own `input.timeout` — the proxy never undercuts a build the caller explicitly asked to run long (`max(resolved, input.timeout)`)
+
+The `task` and `question` defaults are deliberately generous. Subagents routinely run 20–40 min, and a question can sit on a slow operator; under the old flat 10-minute ceiling the proxy fired mid-call, Claude believed its dispatch had failed, and the subagent's eventual result was dropped (the parent turn had already ended on the timeout error). If a `task` call *does* time out, the error tells Claude not to "schedule a wake-up" — that is a Claude Code affordance which cannot fire in this headless/proxy context, so deferring silently loses the work.
+
+```json
+"options": {
+  "proxyTools": ["Bash", "Edit", "Write", "WebFetch", "Task"],
+  "proxyToolTimeoutMs": { "Task": 5400000, "bash": 1800000 }
+}
+```
+
 ---
 
 ## WebSearch routing
@@ -386,7 +405,7 @@ Add `"Question"` to `proxyTools` and grant `permission.question: allow` to the c
 }
 ```
 
-The same spawn-time caveats as `"Task"` apply: provider options are read once at opencode startup, so restart opencode fully after adding it. The proxy timeout is a hard 10 minutes — an operator AFK longer than that gets the call rejected mid-answer (per-tool timeouts are roadmap work).
+The same spawn-time caveats as `"Task"` apply: provider options are read once at opencode startup, so restart opencode fully after adding it. The `question` proxy default deadline is 30 minutes (operator AFK) — raise it via `proxyToolTimeoutMs` if your operators can be slower.
 
 ### Without the proxy (default fallback)
 

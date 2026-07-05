@@ -198,3 +198,90 @@ test("parallel queue from same session: index reflects every callId", () => {
   rejectAllPendingProxyCallsForSession(sk, new Error("cleanup"))
   assert.equal(getPendingProxyCalls(sk).length, 0)
 })
+
+// --- per-tool proxy timeouts ------------------------------------------------
+
+test("queuePendingProxyCall honours a short per-tool override", async () => {
+  const sk = `sk-timeout-${Date.now()}`
+  const a = makeCall("bash")
+  queuePendingProxyCall(sk, a.call, { bash: 40 })
+
+  // The override (40ms) must beat the flat 10-min default decisively.
+  const t0 = Date.now()
+  await assert.rejects(a.promise, /timed out after 40ms/)
+  const elapsed = Date.now() - t0
+  assert.ok(elapsed < 2000, `rejected too late: ${elapsed}ms`)
+
+  assert.equal(getPendingProxyCalls(sk).length, 0)
+})
+
+test("queuePendingProxyCall: task timeout text warns against scheduling a wake-up", async () => {
+  const sk = `sk-task-timeout-${Date.now()}`
+  const a = makeCall("task")
+  queuePendingProxyCall(sk, a.call, { task: 40 })
+
+  await assert.rejects(a.promise, /wake-up/)
+})
+
+test("queuePendingProxyCall: bash input.timeout keeps the call alive past a shorter override", async () => {
+  // Override 40ms, but the caller asked for a 30s bash timeout — the
+  // effective deadline is 30s, so resolving at ~80ms must succeed rather
+  // than the call having already timed out.
+  const sk = `sk-bash-input-${Date.now()}`
+  const a = makeCall("bash", { command: "build", timeout: 30000 })
+  queuePendingProxyCall(sk, a.call, { bash: 40 })
+
+  // Wait past the override deadline to prove input.timeout governs.
+  await new Promise((r) => setTimeout(r, 100))
+  assert.equal(a.rejected, false, "must not have timed out at the override")
+
+  const ok = resolvePendingProxyCallById(a.id, { kind: "text", text: "ok" })
+  assert.equal(ok, true)
+  const result = await a.promise
+  assert.deepEqual(result, { kind: "text", text: "ok" })
+})
+
+test("queuePendingProxyCall with a duplicate callId replaces the old entry cleanly", async () => {
+  // Defensive path: a duplicate id (UUID collision / retry storm) must
+  // reject the FIRST promise with "Replaced", clear its timer, and leave
+  // exactly one pending entry (the new one). A leaked double-entry would
+  // risk a double-fire on timeout.
+  const sk = `sk-replace-${Date.now()}`
+  const dupId = `dup-${Date.now()}`
+  const first: CallHandle = (() => {
+    const state = { id: dupId, resolved: false, rejected: false } as CallHandle
+    state.promise = new Promise<ProxyToolResult>((resolve, reject) => {
+      state.call = {
+        id: dupId,
+        toolName: "bash",
+        input: {},
+        resolve: (r) => {
+          state.resolved = true
+          resolve(r)
+        },
+        reject: (e) => {
+          state.rejected = true
+          reject(e)
+        },
+      }
+    })
+    state.promise.catch(() => {})
+    return state
+  })()
+  const second = makeCall("bash")
+
+  queuePendingProxyCall(sk, first.call)
+  queuePendingProxyCall(sk, second.call)
+  // Reuse the same id on a freshly-made call to trigger the replace path.
+  const secondWithDupId = { ...makeCall("bash").call, id: dupId }
+  queuePendingProxyCall(sk, secondWithDupId)
+
+  await assert.rejects(first.promise, /Replaced pending proxy call/)
+
+  // Exactly one pending entry for that id, and it is the latest call.
+  const pending = getPendingProxyCalls(sk)
+  const matching = pending.filter((p) => p.toolCallId === dupId)
+  assert.equal(matching.length, 1, "only one entry for the replaced id")
+
+  rejectAllPendingProxyCallsForSession(sk, new Error("cleanup"))
+})
