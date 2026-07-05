@@ -213,6 +213,73 @@ export function spawnClaudeProcess(
   return ap
 }
 
+/**
+ * Append `--session-id <id>` to an already-built args vector when a Claude
+ * conversation id is known for the session and the args don't already carry
+ * one. Used by `respawnActiveProcess` to resume the conversation in a fresh
+ * child without rebuilding the whole (version-gated) args vector.
+ */
+export function appendSessionIdIfNeeded(
+  sessionKey: string,
+  cliArgs: string[],
+): string[] {
+  if (cliArgs.includes("--session-id")) return cliArgs
+  const sid = claudeSessions.get(sessionKey)
+  if (!sid) return cliArgs
+  return [...cliArgs, "--session-id", sid]
+}
+
+/**
+ * Replace a wedged reused process with a fresh one, resuming the same
+ * Claude conversation. Used by the doStream start-watchdog when a reused
+ * process produces no stdout within a grace window after a fresh-turn
+ * envelope write — observed after a very long proxy-blocked tool call
+ * (e.g. a multi-minute `task` subagent). Before the per-tool proxy timeout
+ * fix this was masked because the flat 10-minute ceiling ended the turn
+ * first; now that the task proxy blocks and returns successfully, resuming
+ * a reused child after such a long wait can leave it silent on stdout.
+ *
+ * Reuses the existing proxy server, system-prompt file, and MCP hash (their
+ * handles are already baked into `cliArgs`' `--mcp-config`/append-prompt
+ * paths), so this only swaps the child process. The old child's exit
+ * handler is silenced before kill so it doesn't close the proxy server we
+ * are reusing; the new child gets its own exit handler from
+ * `spawnClaudeProcess`. `claudeSessions` is left intact so the respawn can
+ * add `--session-id` (see `appendSessionIdIfNeeded`).
+ *
+ * Returns the new `ActiveProcess`, or `undefined` if there was no active
+ * process for the key (caller should treat that as "nothing to respawn").
+ */
+export function respawnActiveProcess(
+  sessionKey: string,
+  cliPath: string,
+  cliArgs: string[],
+  cwd: string,
+  ignoreAnthropicApiKey?: boolean,
+): ActiveProcess | undefined {
+  const old = activeProcesses.get(sessionKey)
+  if (!old) return undefined
+  activeProcesses.delete(sessionKey)
+  // Silence the old exit handler so it doesn't close the proxy server,
+  // unlink the system-prompt file, or touch claudeSessions on its way out
+  // — those handles are reused by the new child. spawnClaudeProcess wires
+  // a fresh exit handler for the respawned child.
+  old.proc.removeAllListeners("exit")
+  try {
+    old.proc.kill()
+  } catch {}
+  return spawnClaudeProcess(
+    cliPath,
+    appendSessionIdIfNeeded(sessionKey, cliArgs),
+    cwd,
+    sessionKey,
+    old.proxyServer,
+    old.mcpHash,
+    old.systemPromptFile,
+    ignoreAnthropicApiKey,
+  )
+}
+
 export function buildCliArgs(opts: {
   sessionKey: string
   skipPermissions: boolean
